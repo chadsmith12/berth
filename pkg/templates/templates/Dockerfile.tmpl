@@ -1,0 +1,135 @@
+# =============================================================================
+# Berth generated Laravel image — Inertia{{if .Project.HasSsr}} + SSR{{end}} + PostgreSQL{{if .Project.HasWayFinder}} + Wayfinder{{end}}
+# PHP {{.Project.PhpVersion}} / Node {{.Project.NodeVersion}} / {{.Project.PackageManager}}
+# =============================================================================
+
+ARG PHP_VERSION={{.Project.PhpVersion}}
+ARG NODE_VERSION={{.Project.NodeVersion}}
+
+# -----------------------------------------------------------------------------
+# base
+# -----------------------------------------------------------------------------
+FROM dunglas/frankenphp:1-php${PHP_VERSION} AS base
+
+RUN install-php-extensions \
+        pcntl \
+        pdo_pgsql \
+        zip \
+        intl \
+        gd \
+        bcmath \
+        opcache
+
+WORKDIR /app
+
+# -----------------------------------------------------------------------------
+# vendor — caches on composer.lock alone
+# -----------------------------------------------------------------------------
+FROM base AS vendor
+
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+COPY composer.json composer.lock ./
+
+RUN composer install \
+        --no-dev \
+        --no-scripts \
+        --no-autoloader \
+        --prefer-dist \
+        --no-interaction
+
+# -----------------------------------------------------------------------------
+# assets — client bundle{{if .Project.HasSsr}} + SSR bundle{{end}}{{if .Project.HasWayFinder}} + Wayfinder generation{{end}}
+{{- if .Project.HasWayFinder}}
+# FROM vendor, not from a Node image, because Wayfinder needs PHP.
+{{- end}}
+# -----------------------------------------------------------------------------
+FROM vendor AS assets
+
+{{- if eq .Project.PackageManager "bun"}}
+COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
+{{- else}}
+COPY --from=node:${NODE_VERSION}-bookworm-slim /usr/local/bin/node /usr/local/bin/node
+COPY --from=node:${NODE_VERSION}-bookworm-slim /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm
+{{- end}}
+
+ENV APP_ENV=production \
+    APP_DEBUG=false \
+    APP_KEY=base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+
+{{- if eq .Project.PackageManager "bun"}}
+COPY package.json bun.lock* bun.lockb* ./
+RUN bun install --frozen-lockfile
+{{- else}}
+COPY package.json package-lock.json ./
+RUN npm ci
+{{- end}}
+
+COPY . .
+
+RUN composer dump-autoload --optimize --classmap-authoritative --no-interaction \
+    && php artisan package:discover --ansi
+
+{{- if .Project.HasWayFinder}}
+
+RUN php artisan wayfinder:generate
+{{- end}}
+
+{{- if .Project.HasSsr}}
+{{- if eq .Project.PackageManager "bun"}}
+RUN bun run build:ssr \
+    && test -f bootstrap/ssr/app.js \
+       || (echo "ERROR: bootstrap/ssr/app.js not produced. Does package.json 'build' include 'vite build --ssr'?" && exit 1)
+{{- else}}
+RUN npm run build:ssr \
+    && test -f bootstrap/ssr/app.js \
+       || (echo "ERROR: bootstrap/ssr/app.js not produced. Does package.json 'build' include 'vite build --ssr'?" && exit 1)
+{{- end}}
+{{- else}}
+{{- if eq .Project.PackageManager "bun"}}
+RUN bun run build
+{{- else}}
+RUN npm run build
+{{- end}}
+{{- end}}
+
+# -----------------------------------------------------------------------------
+# runtime
+# -----------------------------------------------------------------------------
+FROM base AS runtime
+
+{{- if .Project.HasSsr}}
+COPY --from=node:${NODE_VERSION}-bookworm-slim /usr/local/bin/node /usr/local/bin/node
+{{- end}}
+
+COPY . .
+
+COPY --from=assets /app/vendor          ./vendor
+COPY --from=assets /app/bootstrap/cache ./bootstrap/cache
+COPY --from=assets /app/public/build    ./public/build
+{{- if .Project.HasSsr}}
+COPY --from=assets /app/bootstrap/ssr   ./bootstrap/ssr
+{{- end}}
+
+{{- if .Project.HasSsr}}
+# Vite externalizes dependencies in SSR builds by default, so bootstrap/ssr/*.js
+# contains bare `import 'vue'` statements. The slim image must put them back.
+COPY --from=assets /app/node_modules ./node_modules
+{{- end}}
+
+RUN chown -R www-data:www-data storage bootstrap/cache \
+    && chmod -R 775 storage bootstrap/cache
+
+COPY docker/app/entrypoint.sh /usr/local/bin/entrypoint
+RUN chmod +x /usr/local/bin/entrypoint
+
+RUN { \
+      echo 'opcache.enable=1'; \
+      echo 'opcache.validate_timestamps=0'; \
+      echo 'opcache.memory_consumption=192'; \
+      echo 'opcache.max_accelerated_files=20000'; \
+    } > /usr/local/etc/php/conf.d/opcache.ini
+
+ENTRYPOINT ["entrypoint"]
+
+CMD ["frankenphp", "run", "--config", "/etc/caddy/Caddyfile"]
