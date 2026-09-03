@@ -32,9 +32,10 @@ Coolify  — Hybrid: generate Coolify-compatible files AND optionally call Cooli
 cmd/berth-cli/   — Thin CLI wrapper. Flag parsing, I/O, exit codes. No business logic.
 pkg/detect/      — Filesystem scanning. Reads composer.json, package.json, lockfiles, configs. Returns Plan.
 pkg/plan/        — Core domain types (Plan, Project, Report, Result). Plan.Check() validates.
-pkg/templates/   — Embedded templates (go:embed + text/template). One template per output artifact. (planned)
-pkg/coolify/     — Coolify API client + file generators for Coolify resources. (planned)
-pkg/generate/    — Orchestrates template rendering from a Plan. (planned)
+pkg/templates/   — Embedded templates (go:embed + text/template). One template per output artifact.
+pkg/config/      — Credentials store (~/.config/berth/credentials.json, 0600). berth.json config planned.
+pkg/coolify/     — Coolify API client (token→team, typed ApiError). Name resolution/file generators planned.
+pkg/generate/    — Orchestrates template rendering from a Plan.
 ```
 
 Library code lives in `pkg/*`. It must have zero dependency on CLI or GUI code.
@@ -77,6 +78,17 @@ berth init [--path .] [--workers -1] [-v] [--fix] [--dry-run]
 - `-v` — print detection `Notes` (reasoning)
 - `--fix` — auto-fix fixable `Check` failures
 - `--dry-run` — preview fixes without writing
+
+Auth commands:
+
+```
+berth auth login [--url <u>]    store a token; team auto-detected via GET /teams/current
+berth auth list                 stored tokens by instance and team (tokens truncated)
+```
+
+- Credentials: `~/.config/berth/credentials.json` (0600), keyed by instance URL + team id
+- URL: `--url` → `BERTH_URL` → prompt; token is never a flag (prompt or piped stdin)
+- Token format validated as `<id>|<secret>` at login
 
 Future commands will follow same `berth <command> [flags]` pattern. Keep `main.go` dispatch simple.
 

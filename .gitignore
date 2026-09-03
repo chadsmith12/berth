@@ -27,3 +27,6 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# local coolify test tokens
+scripts/coolify.env

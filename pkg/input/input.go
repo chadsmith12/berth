@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
+
+	"golang.org/x/term"
 )
 
 var ErrNotInteractive = errors.New("input required but stdin is not interactive")
@@ -36,6 +39,28 @@ func (t *Terminal) Prompt(label string) (string, error) {
 	line, err := t.reader.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) && line == "" {
 		return "", fmt.Errorf("read input: %w", err)
+	}
+	return strings.TrimSpace(line), nil
+}
+
+// PromptPassword reads a secret. On a terminal it disables echo; with a pipe
+// it reads one line, so `printf 'tok\n' | berth auth login` works.
+func (t *Terminal) PromptPassword(label string) (string, error) {
+	fmt.Fprintf(t.Out, "%s ", label)
+	if f, ok := t.In.(*os.File); ok && t.Interactive {
+		b, err := term.ReadPassword(int(f.Fd()))
+		fmt.Fprintln(t.Out)
+		if err != nil {
+			return "", fmt.Errorf("read input: %w", err)
+		}
+		return strings.TrimSpace(string(b)), nil
+	}
+	line, err := t.reader.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) && line == "" {
+		return "", fmt.Errorf("read input: %w", err)
+	}
+	if strings.TrimSpace(line) == "" {
+		return "", errors.New("no value entered")
 	}
 	return strings.TrimSpace(line), nil
 }
