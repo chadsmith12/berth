@@ -159,11 +159,11 @@ func TestGlobalsBeforeCommand(t *testing.T) {
 		return 0
 	}
 	app.AddCommand(cmd)
-	code, _, _ := execute(app, "--env", "production", "--json", "-y", "-c", "berth.json", "init")
+	code, _, _ := execute(app, "--env", "production", "--json", "-c", "berth.json", "init")
 	if code != 0 {
 		t.Fatalf("code %d", code)
 	}
-	if got.Env != "production" || !got.JSON || !got.Yes || got.Config != "berth.json" {
+	if got.Env != "production" || !got.JSON || got.Config != "berth.json" {
 		t.Fatalf("globals %+v", got)
 	}
 }
@@ -294,18 +294,6 @@ func TestIOPropagation(t *testing.T) {
 	}
 	if out.String() != "out" || err.String() != "err" {
 		t.Fatalf("out %q err %q", out.String(), err.String())
-	}
-}
-
-func TestShortYesFlag(t *testing.T) {
-	app := cli.NewApp("berth")
-	var got bool
-	cmd := cli.NewCommand("init", "scaffold")
-	cmd.Run = func(ctx *cli.CmdContext, args []string) int { got = ctx.Globals.Yes; return 0 }
-	app.AddCommand(cmd)
-	execute(app, "-y", "init")
-	if !got {
-		t.Fatal("expected yes")
 	}
 }
 

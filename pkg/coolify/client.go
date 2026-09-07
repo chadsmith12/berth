@@ -47,6 +47,22 @@ func (c *Client) CurrentTeam(ctx context.Context) (Team, error) {
 	return team, nil
 }
 
+// VerifyTeam checks which team the token acts as and refuses when it is not
+// the expected one, so a mis-scoped token is caught before anything happens.
+// Acting commands call this on every run.
+func (c *Client) VerifyTeam(ctx context.Context, teamID int) (Team, error) {
+	team, err := c.CurrentTeam(ctx)
+	if err != nil {
+		return Team{}, err
+	}
+	if team.Id != teamID {
+		return Team{}, fmt.Errorf(
+			"the token acts as team %q (id %d), but berth is configured for team id %d — check BERTH_TOKEN or the team in your config",
+			team.Name, team.Id, teamID)
+	}
+	return team, nil
+}
+
 type Team struct {
 	Id          int    `json:"id"`
 	Name        string `json:"name"`

@@ -52,12 +52,32 @@ func CodeOf(err error) int {
 	return ExitFailure
 }
 
+// StringCode maps an error to a stable, machine-readable code for the JSON envelope.
+func StringCode(err error) string {
+	switch CodeOf(err) {
+	case ExitUsage:
+		return "usage_error"
+	case ExitAuth:
+		return "auth_error"
+	case ExitPreflight:
+		return "checks_failed"
+	case ExitFailure:
+		return "operation_failed"
+	default:
+		return "internal_error"
+	}
+}
+
+type ErrorView struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
 type Envelope struct {
-	Success bool   `json:"success"`
-	Command string `json:"command"`
-	Data    any    `json:"data,omitempty"`
-	Error   string `json:"error,omitempty"`
-	Code    int    `json:"code,omitempty"`
+	Success bool       `json:"success"`
+	Command string     `json:"command"`
+	Data    any        `json:"data,omitempty"`
+	Error   *ErrorView `json:"error,omitempty"`
 }
 
 type TextView interface {
@@ -88,8 +108,7 @@ func Emit(ctx *cli.CmdContext, data any, err error) int {
 			Data:    data,
 		}
 		if err != nil {
-			env.Error = err.Error()
-			env.Code = CodeOf(err)
+			env.Error = &ErrorView{Code: StringCode(err), Message: err.Error()}
 		}
 		if werr := WriteJSON(ctx.Stdout, env); werr != nil {
 			fmt.Fprintln(ctx.Stderr, werr)

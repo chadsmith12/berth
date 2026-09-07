@@ -37,6 +37,7 @@ func (p *Plan) Check() Report {
 	return Report{
 		Results: []Result{
 			p.checkSsr(),
+			p.checkWorkers(),
 		},
 	}
 }
@@ -59,6 +60,25 @@ func (r Report) HasFixable() bool {
 	return false
 }
 
+func (p *Plan) checkWorkers() Result {
+	const name = "Queue workers"
+
+	if p.Project.HasHorizon {
+		return Result{
+			Name:     name,
+			Severity: SeverityInfo,
+			OK:       true,
+			Detail:   "laravel/horizon detected -> single horizon service; queue and cache drivers set to redis",
+		}
+	}
+	return Result{
+		Name:     name,
+		Severity: SeverityInfo,
+		OK:       true,
+		Detail:   fmt.Sprintf("%d queue:work workers (database queues)", p.Project.Workers),
+	}
+}
+
 func (p *Plan) checkSsr() Result {
 	const name = "SSR Config"
 
@@ -68,6 +88,15 @@ func (p *Plan) checkSsr() Result {
 			Severity: SeverityInfo,
 			OK:       true,
 			Detail:   "SSR not enabled, skipping",
+		}
+	}
+
+	if p.Project.SsrScript == "" {
+		return Result{
+			Name:     name,
+			Severity: SeverityError,
+			OK:       false,
+			Detail:   "SSR enabled but no package.json script contains --ssr; the SSR bundle would never be built",
 		}
 	}
 

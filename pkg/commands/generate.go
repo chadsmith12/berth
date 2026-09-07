@@ -22,7 +22,12 @@ type ProjectView struct {
 	PackageManager string `json:"package_manager"`
 	HasWayFinder   bool   `json:"wayfinder"`
 	HasSsr         bool   `json:"ssr"`
+	SsrScript      string `json:"ssr_script,omitempty"`
+	HasHorizon     bool   `json:"horizon"`
 	Workers        int    `json:"workers"`
+	Scheduler      bool   `json:"scheduler"`
+	Port           int    `json:"port"`
+	Env            string `json:"env"`
 }
 
 type ResultView struct {
@@ -45,13 +50,13 @@ type FixView struct {
 }
 
 type FileView struct {
-	Path    string `json:"path"`
-	Wrote   bool   `json:"wrote"`
-	Skipped bool   `json:"skipped"`
-	Reason  string `json:"reason,omitempty"`
+	Path   string `json:"path"`
+	Status string `json:"status"`
+	Diff   string `json:"diff,omitempty"`
+	Reason string `json:"reason,omitempty"`
 }
 
-type InitDataView struct {
+type GenerateDataView struct {
 	Verbose bool `json:"-"`
 	DryRun  bool `json:"dry_run,omitempty"`
 
@@ -64,55 +69,108 @@ type InitDataView struct {
 	Hint string `json:"-"`
 }
 
-func NewInitCommand() *cli.Command {
-	cmd := cli.NewCommand("init", "scaffold files + berth.json")
-	cmd.Long = "Detect project type and generate Dockerfiles and related files"
-	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+type generateInput struct {
+	path         string
+	workers      int
+	scheduler    bool
+	schedulerSet bool
+	port         int
+	verbose      bool
+	fix          bool
+	dryRun       bool
+	force        bool
+}
+
+func NewGenerateCommand() *cli.Command {
+	cmd := cli.NewCommand("generate", "scaffold the deployment files")
+	cmd.Long = `Detect the project's facts, ask for the decisions detection cannot
+infer, check the project's prerequisites, and write the deployment files.
+
+Stateless: reads no configuration and contacts no network. --env names the
+compose file, so each environment gets its own service topology.`
+	fs := flag.NewFlagSet("generate", flag.ContinueOnError)
 	path := fs.String("path", ".", "the path to the project directory")
-	workers := fs.Int("workers", -1, "number of queue workers (0 = none)")
+	workers := fs.Int("workers", -1, "number of queue workers (0 = none; ignored when horizon is detected)")
+	scheduler := fs.Bool("scheduler", false, "run a scheduler container (asked when omitted)")
+	port := fs.Int("port", 0, "the port the app container serves on, e.g. 8080 (asked when omitted)")
 	verbose := fs.Bool("v", false, "shows the detection reasoning")
 	fix := fs.Bool("fix", false, "applies the fixable issues")
-	dryRun := fs.Bool("dry-run", false, "dry run (no changes)")
-	force := fs.Bool("force", false, "overwrite existing generated files")
+	dryRun := fs.Bool("dry-run", false, "preview fixes, diffs and writes without touching disk")
+	force := fs.Bool("force", false, "overwrite existing generated files that differ")
 	cmd.Flags = fs
 	cmd.Run = func(ctx *cli.CmdContext, args []string) int {
-		data, err := runInit(*path, *workers, *verbose, *fix, *dryRun, *force, ctx)
+		in := generateInput{
+			path: *path, workers: *workers, scheduler: *scheduler, port: *port,
+			verbose: *verbose, fix: *fix, dryRun: *dryRun, force: *force,
+		}
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "scheduler" {
+				in.schedulerSet = true
+			}
+		})
+		data, err := runGenerate(in, ctx)
 		return output.Emit(ctx, data, err)
 	}
 	return cmd
 }
 
-func runInit(path string, workersFlag int, verbose, fix, dryRun, force bool, ctx *cli.CmdContext) (any, error) {
-	detected, err := detect.Scan(path)
+func runGenerate(in generateInput, ctx *cli.CmdContext) (any, error) {
+	detected, err := detect.Scan(in.path)
 	if err != nil {
 		return nil, err
 	}
-	workers, err := resolveWorkers(ctx, workersFlag)
+
+	env := ctx.Globals.Env
+	if env == "" {
+		env = "production"
+	}
+	detected.Project.Env = env
+
+	if detected.Project.HasHorizon {
+		if in.workers > 0 {
+			detected.Note("--workers ignored: horizon supervises its own queue workers")
+		}
+		detected.Project.Workers = 0
+	} else {
+		workers, err := resolveWorkers(ctx, in.workers)
+		if err != nil {
+			return nil, err
+		}
+		detected.Project.Workers = workers
+	}
+
+	scheduler, err := resolveScheduler(ctx, in.scheduler, in.schedulerSet)
 	if err != nil {
 		return nil, err
 	}
-	detected.Project.Workers = workers
+	detected.Project.Scheduler = scheduler
+
+	port, err := resolvePort(ctx, in.port)
+	if err != nil {
+		return nil, err
+	}
+	detected.Project.Port = port
 
 	report := detected.Check()
-	data := newInitDataView(detected, report, verbose)
-	data.DryRun = dryRun
+	data := newGenerateDataView(detected, report, in.verbose)
+	data.DryRun = in.dryRun
 
-	if fix {
-		data.Fixes = applyFixes(report.Results, dryRun)
-		if anyApplied(data.Fixes) && !dryRun {
+	if in.fix {
+		data.Fixes = applyFixes(report.Results, in.dryRun)
+		if anyApplied(data.Fixes) && !in.dryRun {
 			report = detected.Check()
 			data.Report = newReportView(report)
 		}
 	}
 
 	if report.HasBlockingFailure() {
-		if !fix && report.HasFixable() {
+		if !in.fix && report.HasFixable() {
 			data.Hint = "run with --fix to automatically fix fixable issues"
 		}
 		return data, output.Preflight(fmt.Errorf("checks failed: %s", strings.Join(failingNames(report), ", ")))
 	}
 
-	res, err := generate.Generate(detected, generate.Options{Force: force, DryRun: dryRun})
+	res, err := generate.Generate(detected, generate.Options{Env: env, Force: in.force, DryRun: in.dryRun})
 	if err != nil {
 		return data, err
 	}
@@ -120,7 +178,7 @@ func runInit(path string, workersFlag int, verbose, fix, dryRun, force bool, ctx
 	return data, nil
 }
 
-func (v InitDataView) WriteText(w io.Writer) {
+func (v GenerateDataView) WriteText(w io.Writer) {
 	writeProject(w, v.Project)
 	if v.Verbose {
 		writeNotes(w, v.Notes)
@@ -135,12 +193,16 @@ func (v InitDataView) WriteText(w io.Writer) {
 
 func writeProject(w io.Writer, p ProjectView) {
 	fmt.Fprintf(w, "%-16s %s\n", "project", p.Name)
+	fmt.Fprintf(w, "%-16s %s\n", "env", p.Env)
 	fmt.Fprintf(w, "%-16s %s\n", "php", p.PhpVersion)
 	fmt.Fprintf(w, "%-16s %s\n", "node", p.NodeVersion)
 	fmt.Fprintf(w, "%-16s %s\n", "package manager", p.PackageManager)
 	fmt.Fprintf(w, "%-16s %v\n", "ssr", p.HasSsr)
 	fmt.Fprintf(w, "%-16s %v\n", "wayfinder", p.HasWayFinder)
+	fmt.Fprintf(w, "%-16s %v\n", "horizon", p.HasHorizon)
 	fmt.Fprintf(w, "%-16s %d\n", "workers", p.Workers)
+	fmt.Fprintf(w, "%-16s %v\n", "scheduler", p.Scheduler)
+	fmt.Fprintf(w, "%-16s %d\n", "port", p.Port)
 }
 
 func writeNotes(w io.Writer, notes []string) {
@@ -184,7 +246,7 @@ func writeFixes(w io.Writer, fixes []FixView) {
 	}
 }
 
-func writeFiles(w io.Writer, v InitDataView) {
+func writeFiles(w io.Writer, v GenerateDataView) {
 	if len(v.Files) == 0 {
 		return
 	}
@@ -195,20 +257,20 @@ func writeFiles(w io.Writer, v InitDataView) {
 		fmt.Fprintln(w, "generate:")
 	}
 	for _, f := range v.Files {
-		if f.Skipped {
-			fmt.Fprintf(w, "  [skip] %s: %s\n", f.Path, f.Reason)
-			continue
+		fmt.Fprintf(w, "  [%s] %s\n", f.Status, f.Path)
+		if f.Reason != "" {
+			fmt.Fprintf(w, "        %s\n", f.Reason)
 		}
-		status := "wrote"
-		if v.DryRun {
-			status = "would write"
+		if f.Diff != "" {
+			for _, line := range strings.Split(strings.TrimSuffix(f.Diff, "\n"), "\n") {
+				fmt.Fprintf(w, "  %s\n", line)
+			}
 		}
-		fmt.Fprintf(w, "  [%s] %s\n", status, f.Path)
 	}
 }
 
-func newInitDataView(p plan.Plan, r plan.Report, verbose bool) InitDataView {
-	return InitDataView{
+func newGenerateDataView(p plan.Plan, r plan.Report, verbose bool) GenerateDataView {
+	return GenerateDataView{
 		Verbose: verbose,
 		Project: newProjectView(p.Project),
 		Notes:   p.Notes,
@@ -224,7 +286,12 @@ func newProjectView(p plan.Project) ProjectView {
 		PackageManager: string(p.PackageManager),
 		HasWayFinder:   p.HasWayFinder,
 		HasSsr:         p.HasSsr,
+		SsrScript:      p.SsrScript,
+		HasHorizon:     p.HasHorizon,
 		Workers:        p.Workers,
+		Scheduler:      p.Scheduler,
+		Port:           p.Port,
+		Env:            p.Env,
 	}
 }
 
@@ -248,10 +315,10 @@ func newFileViews(res generate.Result) []FileView {
 	views := make([]FileView, 0, len(res.Files))
 	for _, f := range res.Files {
 		views = append(views, FileView{
-			Path:    f.Path,
-			Wrote:   !f.Skipped && !res.DryRun,
-			Skipped: f.Skipped,
-			Reason:  f.Reason,
+			Path:   f.Path,
+			Status: f.Status,
+			Diff:   f.Diff,
+			Reason: f.Reason,
 		})
 	}
 	return views
@@ -302,15 +369,58 @@ func resolveWorkers(ctx *cli.CmdContext, flag int) (int, error) {
 	if flag >= 0 {
 		return flag, nil
 	}
-	if !ctx.Interactive || ctx.Globals.Yes {
-		return 0, output.Usage(errors.New("missing --workers (required in non-interactive mode)"))
+	if !ctx.Interactive {
+		return 0, output.Usage(errors.New("missing --workers — number of queue workers (0 = none)"))
 	}
 	term := input.New(ctx.Stdin, ctx.Stderr, ctx.Interactive)
-	n, err := term.PromptInt("workers [0-5] (0 = none) ?", nonNegative)
+	n, err := term.PromptInt("workers [0-5] (0 = none)?", nonNegative)
 	if err != nil {
 		return 0, output.Usage(fmt.Errorf("--workers: %w", err))
 	}
 	return n, nil
+}
+
+func resolveScheduler(ctx *cli.CmdContext, flagValue bool, flagSet bool) (bool, error) {
+	if flagSet {
+		return flagValue, nil
+	}
+	if !ctx.Interactive {
+		return false, output.Usage(errors.New("missing --scheduler — pass --scheduler or --scheduler=false"))
+	}
+	term := input.New(ctx.Stdin, ctx.Stderr, ctx.Interactive)
+	b, err := term.PromptYesNo("run a scheduler container?", true)
+	if err != nil {
+		return false, output.Usage(fmt.Errorf("--scheduler: %w", err))
+	}
+	return b, nil
+}
+
+func resolvePort(ctx *cli.CmdContext, flagValue int) (int, error) {
+	if flagValue > 0 {
+		if err := validPort(flagValue); err != nil {
+			return 0, output.Usage(fmt.Errorf("--port: %w", err))
+		}
+		return flagValue, nil
+	}
+	if flagValue < 0 {
+		return 0, output.Usage(fmt.Errorf("--port: %d is not a valid port", flagValue))
+	}
+	if !ctx.Interactive {
+		return 0, output.Usage(errors.New("missing --port — the port the app container serves on (e.g. --port 8080)"))
+	}
+	term := input.New(ctx.Stdin, ctx.Stderr, ctx.Interactive)
+	n, err := term.PromptDefaultInt("application port?", 8080, func(n int) error { return validPort(n) })
+	if err != nil {
+		return 0, output.Usage(fmt.Errorf("--port: %w", err))
+	}
+	return n, nil
+}
+
+func validPort(n int) error {
+	if n < 1 || n > 65535 {
+		return errors.New("must be between 1 and 65535")
+	}
+	return nil
 }
 
 func nonNegative(n int) error {

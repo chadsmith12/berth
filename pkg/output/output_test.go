@@ -43,8 +43,8 @@ func TestEmitJSONSuccess(t *testing.T) {
 			t.Fatalf("missing %s in %q", want, got)
 		}
 	}
-	if strings.Contains(got, `"code"`) {
-		t.Fatalf("success envelope should omit code: %q", got)
+	if strings.Contains(got, `"error"`) {
+		t.Fatalf("success envelope should omit error: %q", got)
 	}
 	if errB.Len() != 0 {
 		t.Fatalf("stderr %q", errB.String())
@@ -59,7 +59,7 @@ func TestEmitJSONErrorWithCode(t *testing.T) {
 		t.Fatalf("code %d", code)
 	}
 	got := out.String()
-	for _, want := range []string{`"success":false`, `"error":"checks failed"`, `"code":4`} {
+	for _, want := range []string{`"success":false`, `"error":{"code":"checks_failed","message":"checks failed"}`} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %s in %q", want, got)
 		}
@@ -75,7 +75,7 @@ func TestEmitJSONPlainErrorDefaultsToFailure(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("code %d", code)
 	}
-	if !strings.Contains(out.String(), `"code":1`) {
+	if !strings.Contains(out.String(), `"error":{"code":"operation_failed","message":"boom"}`) {
 		t.Fatalf("got %q", out.String())
 	}
 }

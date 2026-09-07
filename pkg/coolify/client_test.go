@@ -34,6 +34,38 @@ func TestCurrentTeam(t *testing.T) {
 	}
 }
 
+func TestVerifyTeamAcceptsMatchingTeam(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":3,"name":"Client Work"}`))
+	}))
+	defer srv.Close()
+
+	team, err := coolify.New(srv.URL, "tok").VerifyTeam(context.Background(), 3)
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if team.Id != 3 {
+		t.Fatalf("got %+v", team)
+	}
+}
+
+func TestVerifyTeamRefusesMismatch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":1,"name":"Internal"}`))
+	}))
+	defer srv.Close()
+
+	_, err := coolify.New(srv.URL, "tok").VerifyTeam(context.Background(), 3)
+	if err == nil {
+		t.Fatal("mismatch must be an error")
+	}
+	for _, want := range []string{"Internal", "id 1", "team id 3"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q must name %q", err, want)
+		}
+	}
+}
+
 func TestDoRequiresToken(t *testing.T) {
 	_, err := coolify.New("https://coolify.example.com", "").CurrentTeam(context.Background())
 	if !errors.Is(err, coolify.ErrNoToken) {

@@ -1,0 +1,43 @@
+# =============================================================================
+# Berth generated .dockerignore
+# =============================================================================
+
+vendor/
+node_modules/
+public/build/
+public/hot
+bootstrap/ssr/
+
+.env
+.env.*
+!.env.example
+!.env.docker.example
+
+.git/
+.gitignore
+.gitattributes
+
+bootstrap/cache/*
+storage/logs/*
+storage/framework/cache/*
+storage/framework/sessions/*
+storage/framework/views/*
+storage/debugbar/
+.phpunit.cache/
+.phpunit.result.cache
+coverage/
+tests/
+
+.idea/
+.vscode/
+.fleet/
+*.swp
+.DS_Store
+
+docker-compose*.yml
+Dockerfile
+.dockerignore
+
+README.md
+CHANGELOG.md
+*.md

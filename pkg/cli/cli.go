@@ -11,10 +11,10 @@ import (
 )
 
 type Globals struct {
-	Env    string
-	JSON   bool
-	Yes    bool
-	Config string
+	Env     string
+	JSON    bool
+	Profile string
+	Config  string
 }
 
 type CmdContext struct {
@@ -100,7 +100,7 @@ func (a *App) Execute(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 		return 0
 	}
 	if len(remaining) == 0 {
-		if globals.JSON || globals.Yes || globals.Env != "" || globals.Config != "" {
+		if globals.JSON || globals.Env != "" || globals.Profile != "" || globals.Config != "" {
 			fmt.Fprintln(stderr, "no command specified")
 			return 2
 		}
@@ -226,8 +226,6 @@ func parseGlobals(args []string) (Globals, []string, error) {
 				return g, nil, fmt.Errorf("invalid --json value %q", v)
 			}
 			g.JSON = v == "true" || v == ""
-		case a == "--yes" || a == "-y":
-			g.Yes = true
 		case a == "--env":
 			if i+1 >= len(args) {
 				return g, nil, fmt.Errorf("flag --env requires a value")
@@ -236,6 +234,14 @@ func parseGlobals(args []string) (Globals, []string, error) {
 			g.Env = args[i]
 		case strings.HasPrefix(a, "--env="):
 			g.Env = strings.TrimPrefix(a, "--env=")
+		case a == "--profile":
+			if i+1 >= len(args) {
+				return g, nil, fmt.Errorf("flag --profile requires a value")
+			}
+			i++
+			g.Profile = args[i]
+		case strings.HasPrefix(a, "--profile="):
+			g.Profile = strings.TrimPrefix(a, "--profile=")
 		case a == "-c":
 			if i+1 >= len(args) {
 				return g, nil, fmt.Errorf("flag -c requires a value")
@@ -245,7 +251,7 @@ func parseGlobals(args []string) (Globals, []string, error) {
 		case strings.HasPrefix(a, "-c="):
 			g.Config = strings.TrimPrefix(a, "-c=")
 		default:
-			if strings.HasPrefix(a, "--env") || a == "--json" || strings.HasPrefix(a, "--json=") {
+			if strings.HasPrefix(a, "--env") || strings.HasPrefix(a, "--profile") || a == "--json" || strings.HasPrefix(a, "--json=") {
 				return g, nil, fmt.Errorf("invalid flag %q", a)
 			}
 			remaining = append(remaining, a)
@@ -265,8 +271,8 @@ func printRootHelp(a *App, w io.Writer) {
 	}
 	fmt.Fprintln(w, "Global flags:")
 	fmt.Fprintln(w, "  --env <name>     environment")
+	fmt.Fprintln(w, "  --profile <name> which instance/team identity to use")
 	fmt.Fprintln(w, "  --json           machine-readable output")
-	fmt.Fprintln(w, "  --yes, -y        assume yes")
 	fmt.Fprintln(w, "  -c <path>        config file")
 	fmt.Fprintln(w, "  -h, --help       help")
 }

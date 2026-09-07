@@ -1,0 +1,5 @@
+#!/usr/bin/env php
+<?php
+
+// Stub artisan: the smoke build validates template mechanics, not Laravel.
+exit(0);

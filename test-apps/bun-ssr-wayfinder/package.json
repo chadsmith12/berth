@@ -1,0 +1,16 @@
+{
+    "name": "berth-test/bun-ssr-wayfinder",
+    "private": true,
+    "engines": {
+        "node": "22"
+    },
+    "scripts": {
+        "build": "mkdir -p public/build && echo built > public/build/.vite",
+        "build:ssr": "mkdir -p bootstrap/ssr && echo ssr > bootstrap/ssr/app.js"
+    },
+    "devDependencies": {
+        "@laravel/vite-plugin-wayfinder": "^0.1.10",
+        "laravel-vite-plugin": "^1.0",
+        "vite": "^5.0"
+    }
+}

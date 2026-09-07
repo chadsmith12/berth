@@ -1,0 +1,67 @@
+# =============================================================================
+# Berth generated — Laravel stack (production)
+# One image, multiple roles: app + horizon
+# =============================================================================
+
+x-app-image: &app-image
+    build:
+        context: .
+        dockerfile: docker/app/Dockerfile
+        target: runtime
+
+x-app-env: &app-env
+    APP_ENV: production
+    APP_DEBUG: "false"
+    APP_KEY: ${APP_KEY}
+    APP_URL: ${APP_URL}
+
+    DB_CONNECTION: pgsql
+    DB_HOST: ${DB_HOST}
+    DB_PORT: ${DB_PORT:-5432}
+    DB_DATABASE: ${DB_DATABASE}
+    DB_USERNAME: ${DB_USERNAME}
+    DB_PASSWORD: ${DB_PASSWORD}
+    CACHE_STORE: redis
+    QUEUE_CONNECTION: redis
+    REDIS_HOST: ${REDIS_HOST}
+    REDIS_PORT: ${REDIS_PORT:-6379}
+    SESSION_DRIVER: database
+
+services:
+    app:
+        <<: *app-image
+        environment:
+            <<: *app-env
+            CONTAINER_ROLE: app
+            RUN_MIGRATIONS: "true"
+            SERVER_NAME: ":8080"
+        expose:
+            - "8080"
+        volumes:
+            - app-storage:/app/storage/app
+        healthcheck:
+            test: ["CMD", "php", "-r", "exit(@fsockopen('127.0.0.1', 8080) ? 0 : 1);"]
+            interval: 15s
+            timeout: 5s
+            retries: 5
+            start_period: 40s
+        deploy:
+            replicas: 1
+        restart: unless-stopped
+    horizon:
+        <<: *app-image
+        command: php artisan horizon
+        environment:
+            <<: *app-env
+            CONTAINER_ROLE: worker
+        volumes:
+            - app-storage:/app/storage/app
+        depends_on:
+            app:
+                condition: service_healthy
+        restart: unless-stopped
+        healthcheck:
+            disable: true
+
+volumes:
+    app-storage:

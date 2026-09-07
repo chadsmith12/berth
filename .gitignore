@@ -30,3 +30,7 @@ go.work.sum
 
 # local coolify test tokens
 scripts/coolify.env
+test-apps/real/*
+!test-apps/real/README.md
+!test-apps/real/scaffold.sh
+test-apps/**/node_modules/

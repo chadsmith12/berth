@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/chadsmith12/berth/pkg/plan"
@@ -68,6 +69,17 @@ func Scan(path string) (plan.Plan, error) {
 			return plan, err
 		}
 	}
+	// The composer.json floor is not enough: a lock resolved on a newer PHP
+	// can contain packages whose own requirements exceed it. The lock is the
+	// source of truth for reproducible installs, so it raises the version.
+	if lockVersion, ok := phpVersionFromLock(filepath.Join(path, "composer.lock"), &plan); ok && versionGreater(lockVersion, plan.Project.PhpVersion) {
+		plan.Note(fmt.Sprintf("php: raising to %s — composer.lock contains packages that require it", lockVersion))
+		plan.Project.PhpVersion = lockVersion
+	}
+	if _, ok := composer.Require["laravel/horizon"]; ok {
+		plan.Project.HasHorizon = true
+		plan.Note("composer requires laravel/horizon -> queue workers run horizon (redis)")
+	}
 
 	packageJson, hasPackage := readPackage(path)
 	if hasPackage {
@@ -78,6 +90,7 @@ func Scan(path string) (plan.Plan, error) {
 		if ok {
 			plan.Note(fmt.Sprintf("found %s script -> SSR Enabled", ssr))
 			plan.Project.HasSsr = true
+			plan.Project.SsrScript = ssr
 		}
 	} else {
 		plan.Project.NodeVersion = defaultNodeVersion
@@ -104,6 +117,114 @@ func readComposer(path string) (composerJson, error) {
 		return c, err
 	}
 	return c, nil
+}
+
+type composerLock struct {
+	Platform struct {
+		Php string `json:"php"`
+	} `json:"platform"`
+	Packages []struct {
+		Name    string            `json:"name"`
+		Require map[string]string `json:"require"`
+	} `json:"packages"`
+}
+
+// phpVersionFromLock derives the minimum PHP that can install the lock:
+// the highest lower bound among the locked packages' own php requirements
+// and the platform constraint. Dev packages are skipped — composer install
+// --no-dev removes them.
+func phpVersionFromLock(path string, plan *plan.Plan) (string, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	var lock composerLock
+	if err := json.Unmarshal(data, &lock); err != nil {
+		plan.Note(fmt.Sprintf("php: composer.lock unparseable (%v) -> ignoring", err))
+		return "", false
+	}
+
+	best := ""
+	consider := func(constraint string) {
+		if v := minSatisfyingPhp(constraint); versionGreater(v, best) {
+			best = v
+		}
+	}
+	if lock.Platform.Php != "" {
+		consider(lock.Platform.Php)
+	}
+	for _, p := range lock.Packages {
+		if c, ok := p.Require["php"]; ok {
+			consider(c)
+		}
+	}
+	if best == "" {
+		return "", false
+	}
+	plan.Note(fmt.Sprintf("php: composer.lock requires at least %s", best))
+	return best, true
+}
+
+// minSatisfyingPhp returns the lowest X.Y version that satisfies a composer
+// constraint. Alternatives ("a || b") take the lowest branch; conjunctions
+// ("a b") take the highest; upper bounds ("<x") are ignored.
+func minSatisfyingPhp(constraint string) string {
+	constraint = strings.TrimSpace(constraint)
+	if constraint == "" || constraint == "*" {
+		return ""
+	}
+	best := ""
+	for _, branch := range strings.FieldsFunc(constraint, func(r rune) bool { return r == '|' }) {
+		branchMin := ""
+		for _, tok := range strings.FieldsFunc(branch, func(r rune) bool { return r == ' ' || r == ',' }) {
+			tok = strings.TrimSpace(tok)
+			if tok == "" || strings.HasPrefix(tok, "<") || strings.HasPrefix(tok, "!") {
+				continue
+			}
+			if v := lowerBound(tok); versionGreater(v, branchMin) {
+				branchMin = v
+			}
+		}
+		if branchMin == "" {
+			continue
+		}
+		if best == "" || versionLess(branchMin, best) {
+			best = branchMin
+		}
+	}
+	return best
+}
+
+func lowerBound(tok string) string {
+	m := regexp.MustCompile(`^[\^~>=]*v?(\d+)\.(\d+)`).FindStringSubmatch(strings.TrimSpace(tok))
+	if m == nil {
+		return ""
+	}
+	return m[1] + "." + m[2]
+}
+
+// versionGreater compares X.Y versions numerically; "" loses to everything.
+func versionGreater(a, b string) bool {
+	if a == "" {
+		return false
+	}
+	if b == "" {
+		return true
+	}
+	am, aj, _ := strings.Cut(a, ".")
+	bm, bj, _ := strings.Cut(b, ".")
+	ami, _ := strconv.Atoi(am)
+	ami2, _ := strconv.Atoi(aj)
+	bmi, _ := strconv.Atoi(bm)
+	bmi2, _ := strconv.Atoi(bj)
+	if ami != bmi {
+		return ami > bmi
+	}
+	return ami2 > bmi2
+}
+
+func versionLess(a, b string) bool {
+	return a != b && !versionGreater(a, b)
 }
 
 func readPackage(path string) (packageJson, bool) {

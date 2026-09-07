@@ -1,6 +1,6 @@
 # =============================================================================
-# Berth generated — Laravel stack
-# One image, multiple roles: app{{if .Project.HasSsr}} + ssr{{end}} + worker(s) + scheduler
+# Berth generated — Laravel stack ({{.Project.Env}})
+# One image, multiple roles: app{{if .Project.HasSsr}} + ssr{{end}}{{if .Project.HasHorizon}} + horizon{{else}}{{if gt .Project.Workers 0}} + workers{{end}}{{end}}{{if .Project.Scheduler}} + scheduler{{end}}
 # =============================================================================
 
 x-app-image: &app-image
@@ -10,7 +10,7 @@ x-app-image: &app-image
         target: runtime
 
 x-app-env: &app-env
-    APP_ENV: production
+    APP_ENV: {{.Project.Env}}
     APP_DEBUG: "false"
     APP_KEY: ${APP_KEY}
     APP_URL: ${APP_URL}
@@ -22,8 +22,15 @@ x-app-env: &app-env
     DB_USERNAME: ${DB_USERNAME}
     DB_PASSWORD: ${DB_PASSWORD}
 
+{{- if .Project.HasHorizon}}
+    CACHE_STORE: redis
+    QUEUE_CONNECTION: redis
+    REDIS_HOST: ${REDIS_HOST}
+    REDIS_PORT: ${REDIS_PORT:-6379}
+{{- else}}
     CACHE_STORE: database
     QUEUE_CONNECTION: database
+{{- end}}
     SESSION_DRIVER: database
 
 {{- if .Project.HasSsr}}
@@ -38,9 +45,9 @@ services:
             <<: *app-env
             CONTAINER_ROLE: app
             RUN_MIGRATIONS: "true"
-            SERVER_NAME: ":8080"
+            SERVER_NAME: ":{{.Project.Port}}"
         expose:
-            - "8080"
+            - "{{.Project.Port}}"
         volumes:
             - app-storage:/app/storage/app
 {{- if .Project.HasSsr}}
@@ -49,7 +56,7 @@ services:
                 condition: service_healthy
 {{- end}}
         healthcheck:
-            test: ["CMD", "php", "-r", "exit(@fsockopen('127.0.0.1', 8080) ? 0 : 1);"]
+            test: ["CMD", "php", "-r", "exit(@fsockopen('127.0.0.1', {{.Project.Port}}) ? 0 : 1);"]
             interval: 15s
             timeout: 5s
             retries: 5
@@ -78,6 +85,22 @@ services:
         restart: unless-stopped
 {{- end}}
 
+{{- if .Project.HasHorizon}}
+    horizon:
+        <<: *app-image
+        command: php artisan horizon
+        environment:
+            <<: *app-env
+            CONTAINER_ROLE: worker
+        volumes:
+            - app-storage:/app/storage/app
+        depends_on:
+            app:
+                condition: service_healthy
+        restart: unless-stopped
+        healthcheck:
+            disable: true
+{{- else}}
 {{- range $i := seq .Project.Workers}}
     worker-{{$i}}:
         <<: *app-image
@@ -99,7 +122,9 @@ services:
         healthcheck:
             disable: true
 {{- end}}
+{{- end}}
 
+{{- if .Project.Scheduler}}
     scheduler:
         <<: *app-image
         command: php artisan schedule:work
@@ -116,6 +141,7 @@ services:
         restart: unless-stopped
         healthcheck:
             disable: true
+{{- end}}
 
 volumes:
     app-storage:

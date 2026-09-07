@@ -65,6 +65,107 @@ func (t *Terminal) PromptPassword(label string) (string, error) {
 	return strings.TrimSpace(line), nil
 }
 
+// PromptDefault asks for a value, offering def as the accepted default.
+// Empty input takes the default; non-interactive stdin takes it directly.
+func (t *Terminal) PromptDefault(label, def string) (string, error) {
+	if !t.Interactive {
+		return def, nil
+	}
+	line, err := t.Prompt(fmt.Sprintf("%s [%s]", label, def))
+	if err != nil {
+		return "", err
+	}
+	if line == "" {
+		return def, nil
+	}
+	return line, nil
+}
+
+// PromptYesNo asks a yes/no question, offering def when the answer is empty
+// or stdin is not interactive.
+func (t *Terminal) PromptYesNo(label string, def bool) (bool, error) {
+	if !t.Interactive {
+		return def, nil
+	}
+	hint := "[y/N]"
+	if def {
+		hint = "[Y/n]"
+	}
+	line, err := t.Prompt(fmt.Sprintf("%s %s", label, hint))
+	if err != nil {
+		return false, err
+	}
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "":
+		return def, nil
+	case "y", "yes", "true":
+		return true, nil
+	case "n", "no", "false":
+		return false, nil
+	default:
+		return false, fmt.Errorf("please answer y or n, got %q", line)
+	}
+}
+
+// PromptDefaultInt asks for an integer, offering def when the answer is
+// empty or stdin is not interactive.
+func (t *Terminal) PromptDefaultInt(label string, def int, validate func(int) error) (int, error) {
+	if !t.Interactive {
+		return def, nil
+	}
+	for range 3 {
+		line, err := t.Prompt(fmt.Sprintf("%s [%d]", label, def))
+		if err != nil {
+			return 0, err
+		}
+		if strings.TrimSpace(line) == "" {
+			return def, nil
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(line))
+		if err != nil {
+			fmt.Fprintf(t.Out, "  not a number: %s\n", line)
+			continue
+		}
+		if validate != nil {
+			if verr := validate(n); verr != nil {
+				fmt.Fprintf(t.Out, "  %s\n", verr)
+				continue
+			}
+		}
+		return n, nil
+	}
+	return 0, errors.New("no valid value entered")
+}
+
+// Select shows a numbered list and asks for a pick. It returns the index of
+// the chosen option. Non-interactive stdin is an error — callers turn that
+// into a usage error naming the flag.
+func (t *Terminal) Select(label string, options []string) (int, error) {
+	if !t.Interactive {
+		return 0, ErrNotInteractive
+	}
+	if len(options) == 0 {
+		return 0, errors.New("no options to select from")
+	}
+	fmt.Fprintf(t.Out, "%s\n", label)
+	for i, o := range options {
+		fmt.Fprintf(t.Out, "  %d) %s\n", i+1, o)
+	}
+	for range 3 {
+		line, err := t.Prompt("number?")
+		if err != nil {
+			return 0, err
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(line))
+		if err != nil || n < 1 || n > len(options) {
+			fmt.Fprintf(t.Out, "  pick a number between 1 and %d\n", len(options))
+			continue
+		}
+		return n - 1, nil
+	}
+	return 0, errors.New("no valid selection")
+}
+
 func (t *Terminal) PromptInt(label string, validate func(int) error) (int, error) {
 	line, err := t.Prompt(label)
 	if err != nil {

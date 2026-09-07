@@ -31,7 +31,12 @@ type Project struct {
 	PackageManager PackageManager
 	HasWayFinder   bool
 	HasSsr         bool
+	SsrScript      string
+	HasHorizon     bool
 	Workers        int
+	Scheduler      bool
+	Port           int
+	Env            string
 }
 
 func (p *Plan) Note(note string) {

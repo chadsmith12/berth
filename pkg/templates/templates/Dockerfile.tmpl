@@ -18,9 +18,14 @@ RUN install-php-extensions \
         intl \
         gd \
         bcmath \
-        opcache
+        opcache{{if .Project.HasHorizon}} \
+        redis{{end}}
 
 WORKDIR /app
+
+# node — a named stage, because BuildKit rejects variable expansion in
+# COPY --from. Stages build lazily, so PHP-only projects never pull it.
+FROM node:${NODE_VERSION}-bookworm-slim AS node
 
 # -----------------------------------------------------------------------------
 # vendor — caches on composer.lock alone
@@ -38,25 +43,28 @@ RUN composer install \
         --no-interaction
 
 # -----------------------------------------------------------------------------
-# assets — client bundle{{if .Project.HasSsr}} + SSR bundle{{end}}{{if .Project.HasWayFinder}} + Wayfinder generation{{end}}
+# assets — vendor + optimized autoload, plus the client bundle{{if .Project.HasSsr}} + SSR bundle{{end}}{{if .Project.HasWayFinder}} + Wayfinder generation{{end}} when the project has a JS toolchain
 {{- if .Project.HasWayFinder}}
 # FROM vendor, not from a Node image, because Wayfinder needs PHP.
 {{- end}}
 # -----------------------------------------------------------------------------
 FROM vendor AS assets
 
+{{- if .Project.PackageManager}}
 {{- if eq .Project.PackageManager "bun"}}
 COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
 {{- else}}
-COPY --from=node:${NODE_VERSION}-bookworm-slim /usr/local/bin/node /usr/local/bin/node
-COPY --from=node:${NODE_VERSION}-bookworm-slim /usr/local/lib/node_modules /usr/local/lib/node_modules
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm
+{{- end}}
 {{- end}}
 
 ENV APP_ENV=production \
     APP_DEBUG=false \
     APP_KEY=base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
 
+{{- if .Project.PackageManager}}
 {{- if eq .Project.PackageManager "bun"}}
 COPY package.json bun.lock* bun.lockb* ./
 RUN bun install --frozen-lockfile
@@ -64,10 +72,12 @@ RUN bun install --frozen-lockfile
 COPY package.json package-lock.json ./
 RUN npm ci
 {{- end}}
+{{- end}}
 
 COPY . .
 
-RUN composer dump-autoload --optimize --classmap-authoritative --no-interaction \
+RUN mkdir -p bootstrap/cache \
+    && composer dump-autoload --optimize --classmap-authoritative --no-interaction \
     && php artisan package:discover --ansi
 
 {{- if .Project.HasWayFinder}}
@@ -77,15 +87,15 @@ RUN php artisan wayfinder:generate
 
 {{- if .Project.HasSsr}}
 {{- if eq .Project.PackageManager "bun"}}
-RUN bun run build:ssr \
+RUN bun run {{.Project.SsrScript}} \
     && test -f bootstrap/ssr/app.js \
-       || (echo "ERROR: bootstrap/ssr/app.js not produced. Does package.json 'build' include 'vite build --ssr'?" && exit 1)
+       || (echo "ERROR: bootstrap/ssr/app.js not produced. Does the {{.Project.SsrScript}} script run 'vite build --ssr'?" && exit 1)
 {{- else}}
-RUN npm run build:ssr \
+RUN npm run {{.Project.SsrScript}} \
     && test -f bootstrap/ssr/app.js \
-       || (echo "ERROR: bootstrap/ssr/app.js not produced. Does package.json 'build' include 'vite build --ssr'?" && exit 1)
+       || (echo "ERROR: bootstrap/ssr/app.js not produced. Does the {{.Project.SsrScript}} script run 'vite build --ssr'?" && exit 1)
 {{- end}}
-{{- else}}
+{{- else if .Project.PackageManager}}
 {{- if eq .Project.PackageManager "bun"}}
 RUN bun run build
 {{- else}}
@@ -99,25 +109,26 @@ RUN npm run build
 FROM base AS runtime
 
 {{- if .Project.HasSsr}}
-COPY --from=node:${NODE_VERSION}-bookworm-slim /usr/local/bin/node /usr/local/bin/node
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
 {{- end}}
 
 COPY . .
 
 COPY --from=assets /app/vendor          ./vendor
 COPY --from=assets /app/bootstrap/cache ./bootstrap/cache
+{{- if .Project.PackageManager}}
 COPY --from=assets /app/public/build    ./public/build
 {{- if .Project.HasSsr}}
 COPY --from=assets /app/bootstrap/ssr   ./bootstrap/ssr
-{{- end}}
 
-{{- if .Project.HasSsr}}
 # Vite externalizes dependencies in SSR builds by default, so bootstrap/ssr/*.js
 # contains bare `import 'vue'` statements. The slim image must put them back.
 COPY --from=assets /app/node_modules ./node_modules
 {{- end}}
+{{- end}}
 
-RUN chown -R www-data:www-data storage bootstrap/cache \
+RUN mkdir -p storage/framework/cache storage/framework/sessions storage/framework/views storage/logs storage/app bootstrap/cache \
+    && chown -R www-data:www-data storage bootstrap/cache \
     && chmod -R 775 storage bootstrap/cache
 
 COPY docker/app/entrypoint.sh /usr/local/bin/entrypoint

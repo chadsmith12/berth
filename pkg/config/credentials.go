@@ -101,6 +101,40 @@ func FindToken(c Credentials, url string, teamID int) (string, bool) {
 	return "", false
 }
 
+// TokensFor returns the tokens stored for an instance URL.
+func TokensFor(c Credentials, url string) []TeamToken {
+	normalized := NormalizeURL(url)
+	for _, inst := range c.Instances {
+		if inst.URL == normalized {
+			return inst.Teams
+		}
+	}
+	return nil
+}
+
+// RemoveToken deletes the token stored for an instance and team, dropping the
+// instance when it holds no tokens left. It reports whether a token was removed.
+func RemoveToken(c *Credentials, url string, teamID int) bool {
+	normalized := NormalizeURL(url)
+	for i := range c.Instances {
+		if c.Instances[i].URL != normalized {
+			continue
+		}
+		for j, t := range c.Instances[i].Teams {
+			if t.ID != teamID {
+				continue
+			}
+			c.Instances[i].Teams = append(c.Instances[i].Teams[:j], c.Instances[i].Teams[j+1:]...)
+			if len(c.Instances[i].Teams) == 0 {
+				c.Instances = append(c.Instances[:i], c.Instances[i+1:]...)
+			}
+			return true
+		}
+		return false
+	}
+	return false
+}
+
 func TruncateToken(token string) string {
 	if id, _, ok := strings.Cut(token, "|"); ok {
 		return id + "|..."

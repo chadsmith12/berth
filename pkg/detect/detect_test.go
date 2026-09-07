@@ -1,0 +1,143 @@
+package detect
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func writeProject(t *testing.T, composer, packageJson string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "composer.json"), []byte(composer), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if packageJson != "" {
+		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(packageJson), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+const baseComposer = `{"require": {"laravel/framework": "^11.0", "php": "^8.2"}}`
+
+func TestScanDetectsHorizon(t *testing.T) {
+	dir := writeProject(t, `{"require": {"laravel/framework": "^11.0", "php": "^8.2", "laravel/horizon": "^5.0"}}`, "")
+
+	p, err := Scan(dir)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if !p.Project.HasHorizon {
+		t.Fatal("horizon must be detected")
+	}
+}
+
+func TestScanWithoutHorizon(t *testing.T) {
+	dir := writeProject(t, baseComposer, "")
+
+	p, err := Scan(dir)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if p.Project.HasHorizon {
+		t.Fatal("horizon must not be detected")
+	}
+}
+
+func TestScanRecordsSsrScriptName(t *testing.T) {
+	dir := writeProject(t, baseComposer, `{
+		"scripts": {"build": "vite build", "build:ssr": "vite build --ssr"},
+		"devDependencies": {"@laravel/vite-plugin-wayfinder": "^1.0"}
+	}`)
+
+	p, err := Scan(dir)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if !p.Project.HasSsr || p.Project.SsrScript != "build:ssr" {
+		t.Fatalf("ssr script: %+v", p.Project)
+	}
+}
+
+func TestScanSsrWithoutScriptNameFailsCheck(t *testing.T) {
+	dir := writeProject(t, baseComposer, "")
+	p, err := Scan(dir)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	p.Project.HasSsr = true
+	p.Project.SsrScript = ""
+
+	report := p.Check()
+	if !report.HasBlockingFailure() {
+		t.Fatal("ssr without a build script must be a blocking failure")
+	}
+}
+
+func TestScanRaisesPhpFromComposerLock(t *testing.T) {
+	dir := writeProject(t, baseComposer, "")
+	// the real-world case: a lock resolved on PHP 8.5 locked symfony
+	// packages that require >= 8.4.1, while composer.json says ^8.3
+	lock := `{
+		"platform": {"php": "^8.3"},
+		"packages": [
+			{"name": "laravel/framework", "require": {"php": "^8.3"}},
+			{"name": "symfony/http-foundation", "require": {"php": ">=8.4.1"}},
+			{"name": "dasprid/enum", "require": {"php": ">=7.1 <9.0"}},
+			{"name": "dragonmantank/cron-expression", "require": {"php": "^8.2|^8.3|^8.4|^8.5"}}
+		],
+		"packages-dev": [
+			{"name": "phpunit/phpunit", "require": {"php": ">=99.0"}}
+		]
+	}`
+	if err := os.WriteFile(filepath.Join(dir, "composer.lock"), []byte(lock), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := Scan(dir)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if p.Project.PhpVersion != "8.4" {
+		t.Fatalf("php %q, want 8.4 (lock max requirement)", p.Project.PhpVersion)
+	}
+}
+
+func TestScanKeepsJsonVersionWhenHigher(t *testing.T) {
+	dir := writeProject(t, `{"require": {"laravel/framework": "^11.0", "php": "^8.5"}}`, "")
+	lock := `{
+		"platform": {"php": "^8.3"},
+		"packages": [{"name": "laravel/framework", "require": {"php": "^8.2"}}]
+	}`
+	if err := os.WriteFile(filepath.Join(dir, "composer.lock"), []byte(lock), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := Scan(dir)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if p.Project.PhpVersion != "8.5" {
+		t.Fatalf("php %q, want 8.5", p.Project.PhpVersion)
+	}
+}
+
+func TestMinSatisfyingPhp(t *testing.T) {
+	cases := map[string]string{
+		"^8.3":                "8.3",
+		">=8.4.1":             "8.4",
+		">=7.1 <9.0":          "7.1",
+		"^8.2|^8.3|^8.4|^8.5": "8.2",
+		"~8.2.0":              "8.2",
+		"*":                   "",
+		"":                    "",
+		">=8.1, <9.0":         "8.1",
+	}
+	for in, want := range cases {
+		if got := minSatisfyingPhp(in); got != want {
+			t.Errorf("minSatisfyingPhp(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

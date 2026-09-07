@@ -90,6 +90,47 @@ func TestFindToken(t *testing.T) {
 	}
 }
 
+func TestTokensFor(t *testing.T) {
+	creds := config.Credentials{}
+	config.UpsertToken(&creds, "http://host:8000", config.TeamToken{ID: 3, Name: "Client Work", Token: "45|b"})
+	config.UpsertToken(&creds, "http://other:8000", config.TeamToken{ID: 1, Name: "Internal", Token: "1|a"})
+
+	tokens := config.TokensFor(creds, "http://host:8000/")
+	if len(tokens) != 1 || tokens[0].ID != 3 {
+		t.Fatalf("got %+v", tokens)
+	}
+	if got := config.TokensFor(creds, "http://missing:8000"); got != nil {
+		t.Fatalf("unknown instance should be empty, got %+v", got)
+	}
+}
+
+func TestRemoveToken(t *testing.T) {
+	creds := config.Credentials{}
+	config.UpsertToken(&creds, "http://host:8000", config.TeamToken{ID: 3, Name: "Client Work", Token: "45|b"})
+	config.UpsertToken(&creds, "http://host:8000", config.TeamToken{ID: 1, Name: "Internal", Token: "1|a"})
+
+	if !config.RemoveToken(&creds, "http://host:8000/", 3) {
+		t.Fatal("expected removal")
+	}
+	if _, ok := config.FindToken(creds, "http://host:8000", 3); ok {
+		t.Fatal("token should be gone")
+	}
+	if len(config.TokensFor(creds, "http://host:8000")) != 1 {
+		t.Fatalf("other token should remain: %+v", creds)
+	}
+
+	if !config.RemoveToken(&creds, "http://host:8000", 1) {
+		t.Fatal("expected removal")
+	}
+	if len(creds.Instances) != 0 {
+		t.Fatalf("empty instance should be dropped: %+v", creds.Instances)
+	}
+
+	if config.RemoveToken(&creds, "http://host:8000", 9) {
+		t.Fatal("removing a missing token should report false")
+	}
+}
+
 func TestTruncateToken(t *testing.T) {
 	if got := config.TruncateToken("12|verysecret"); got != "12|..." {
 		t.Fatalf("got %q", got)
