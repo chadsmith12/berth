@@ -3,6 +3,7 @@ package detect
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -139,5 +140,96 @@ func TestMinSatisfyingPhp(t *testing.T) {
 		if got := minSatisfyingPhp(in); got != want {
 			t.Errorf("minSatisfyingPhp(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func TestScanMonorepoDescendsIntoSingleApp(t *testing.T) {
+	root := repoRoot(t)
+	app := filepath.Join(root, "web")
+	if err := os.MkdirAll(app, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(app, "composer.json"), []byte(baseComposer), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := Scan(root)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if p.Project.Name != "web" {
+		t.Fatalf("name %q, want the app subdir name", p.Project.Name)
+	}
+	if p.Project.BaseDir != "web" {
+		t.Fatalf("base dir %q, want web", p.Project.BaseDir)
+	}
+}
+
+func TestScanMultipleAppsIsAnError(t *testing.T) {
+	root := repoRoot(t)
+	for _, dir := range []string{"web", "api"} {
+		d := filepath.Join(root, dir)
+		if err := os.MkdirAll(d, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, "composer.json"), []byte(baseComposer), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := Scan(root); err == nil {
+		t.Fatal("multiple laravel apps under the repo root must be an error")
+	} else if !strings.Contains(err.Error(), "web") || !strings.Contains(err.Error(), "api") {
+		t.Fatalf("error should name the app dirs, got: %v", err)
+	}
+}
+
+func TestScanAppAtRepoRootHasEmptyBaseDir(t *testing.T) {
+	root := repoRoot(t)
+	if err := os.WriteFile(filepath.Join(root, "composer.json"), []byte(baseComposer), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := Scan(root)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if p.Project.BaseDir != "" {
+		t.Fatalf("base dir %q, want empty (app at repo root)", p.Project.BaseDir)
+	}
+}
+
+func TestScanNoGitKeepsEmptyBaseDir(t *testing.T) {
+	dir := writeProject(t, baseComposer, "")
+	p, err := Scan(dir)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if p.Project.BaseDir != "" {
+		t.Fatalf("base dir %q, want empty when no git repo", p.Project.BaseDir)
+	}
+}
+
+func TestRepoRootWalksUp(t *testing.T) {
+	root := repoRoot(t)
+	app := filepath.Join(root, "a", "b")
+	if err := os.MkdirAll(app, 0755); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := RepoRoot(app)
+	if !ok || got != root {
+		t.Fatalf("RepoRoot(%q) = %q, %v; want %q, true", app, got, ok, root)
+	}
+	if _, ok := RepoRoot(t.TempDir()); ok {
+		t.Fatal("RepoRoot outside a git repo must return false")
 	}
 }

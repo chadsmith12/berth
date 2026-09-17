@@ -336,7 +336,14 @@ reads no configuration and contacts no network.
 berth generate [--path .] [--workers -1] [--scheduler] [--port N] [--fix] [--dry-run] [--force]
 ```
 
-Detected: package manager, PHP and Node versions, SSR, Wayfinder, Horizon.
+Detected: package manager, PHP and Node versions, SSR, Wayfinder, Horizon,
+and the **base directory** — the app's path relative to the git repository
+root (empty when the app sits at the repo root). `--path` may be either the
+app directory or the repository root: if the root has no `composer.json` of
+its own, `generate` descends into the monorepo's single Laravel app (several
+apps is an error naming each, pointing you at `--path <subdir>`). The base
+directory is surfaced as `base dir` in the output and drives the
+`base_directory` value sent to Coolify at launch time.
 Asked or flagged: worker count, scheduler, application port. Horizon changes
 the topology itself: `laravel/horizon` replaces the `worker-N` services with
 a single `horizon` service and switches queue and cache to redis, so the
@@ -386,6 +393,16 @@ berth launch --env production \
   --database <uuid> \
   --key <uuid>
 ```
+
+`launch` locates the app the same way `generate` writes it: a `--path`
+pointing at the repository root is descended into the subdirectory holding the
+generated `docker-compose.<env>.yml` (the monorepo app), so
+`berth generate --path .` followed by `berth launch --path .` works unchanged.
+It derives the **base directory** (that app path relative to the git
+repository root; empty = repo root), which maps to Coolify's
+`base_directory` (a `/`-prefixed path). Coolify combines that with the compose
+file location when locating the stack — this is what makes a monorepo app
+deploy correctly.
 
 The domain does not need to carry the container port. `launch` reads the port
 the `app` service exposes from `docker-compose.<env>.yml` and appends it; a
@@ -552,6 +569,7 @@ rather than loud.
 | Exactly one scheduler                                         | Two means every scheduled job fires twice                                                                                        |
 | Migrations run in `app` only, and `app` is a single container | Without Redis there is no shared lock; `migrate --isolated` needs `cache_locks`, which does not exist before the first migration |
 | `worker` and `scheduler` disable the inherited healthcheck    | The base image probes a web server these containers do not run, so they would sit permanently unhealthy                          |
+| Non-web services also set `exclude_from_hc: true`             | Coolify aggregates every non-excluded container's health into the app's status; a worker/scheduler with no check reports "unknown" and makes the whole stack show "no healthcheck" |
 | `expose`, never `ports`                                       | Publishing a port bypasses the proxy                                                                                             |
 | `node_modules` ships when SSR is on                           | The SSR container is a long-running Node process, and Vite externalizes dependencies in SSR builds                               |
 | The assets stage builds on the PHP image                      | Laravel Vite plugins shell out to `php artisan` during the build                                                                 |
@@ -570,7 +588,10 @@ produces a deployment that appears to work.
 
 The domain carrying the container port is handled at `launch`: the port comes
 from the compose file, not from you — a domain without a port gets one
-appended, a domain with one is cross-checked. `generate` never sees a domain.
+appended, a domain with one is cross-checked. The **scheme** is preserved and
+drives TLS: `https://` tells Coolify to provision a certificate, `http://` does
+not. Only `http` and `https` are accepted; a scheme-less host defaults to
+`http`, any other scheme is refused. `generate` never sees a domain.
 
 ---
 

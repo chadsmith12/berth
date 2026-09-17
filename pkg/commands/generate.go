@@ -17,6 +17,7 @@ import (
 
 type ProjectView struct {
 	Name           string `json:"name"`
+	BaseDir        string `json:"base_dir,omitempty"`
 	PhpVersion     string `json:"php_version"`
 	NodeVersion    string `json:"node_version"`
 	PackageManager string `json:"package_manager"`
@@ -193,6 +194,11 @@ func (v GenerateDataView) WriteText(w io.Writer) {
 
 func writeProject(w io.Writer, p ProjectView) {
 	fmt.Fprintf(w, "%-16s %s\n", "project", p.Name)
+	if p.BaseDir != "" {
+		fmt.Fprintf(w, "%-16s /%s\n", "base dir", p.BaseDir)
+	} else {
+		fmt.Fprintf(w, "%-16s /\n", "base dir")
+	}
 	fmt.Fprintf(w, "%-16s %s\n", "env", p.Env)
 	fmt.Fprintf(w, "%-16s %s\n", "php", p.PhpVersion)
 	fmt.Fprintf(w, "%-16s %s\n", "node", p.NodeVersion)
@@ -281,6 +287,7 @@ func newGenerateDataView(p plan.Plan, r plan.Report, verbose bool) GenerateDataV
 func newProjectView(p plan.Project) ProjectView {
 	return ProjectView{
 		Name:           p.Name,
+		BaseDir:        p.BaseDir,
 		PhpVersion:     p.PhpVersion,
 		NodeVersion:    p.NodeVersion,
 		PackageManager: string(p.PackageManager),

@@ -26,6 +26,7 @@ type Plan struct {
 type Project struct {
 	Path           string
 	Name           string
+	BaseDir        string
 	PhpVersion     string
 	NodeVersion    string
 	PackageManager PackageManager

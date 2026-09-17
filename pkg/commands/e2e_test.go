@@ -128,6 +128,69 @@ func TestGenerateE2E(t *testing.T) {
 	}
 }
 
+func TestGenerateE2EMonorepo(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	app := filepath.Join(root, "web")
+	if err := os.MkdirAll(app, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(app, "composer.json"), []byte(`{"require": {"laravel/framework": "^11.0", "php": "^8.3"}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(app, "package.json"), []byte(`{"engines": {"node": "20"}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out, errB := runCLI([]string{"generate", "--path", root, "--workers", "2", "--scheduler=false", "--port", "8080"}, "")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q, stdout %q", code, errB, out)
+	}
+	if !strings.Contains(out, "/web") {
+		t.Fatalf("output should surface the base dir /web, got:\n%s", out)
+	}
+
+	for _, rel := range generatedFiles {
+		if _, err := os.Stat(filepath.Join(app, rel)); err != nil {
+			t.Fatalf("generate should write %s into the app subdir: %v", rel, err)
+		}
+	}
+
+	compose, err := os.ReadFile(filepath.Join(app, "docker-compose.production.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(compose), "context: .") {
+		t.Errorf("compose build context must stay app-relative:\n%s", compose)
+	}
+}
+
+func TestGenerateE2EMonorepoMultipleAppsFails(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{"web", "api"} {
+		d := filepath.Join(root, dir)
+		if err := os.MkdirAll(d, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, "composer.json"), []byte(`{"require": {"laravel/framework": "^11.0", "php": "^8.3"}}`), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	code, _, errB := runCLI([]string{"generate", "--path", root, "--workers", "2", "--scheduler=false", "--port", "8080"}, "")
+	if code == 0 {
+		t.Fatal("generate against a repo root with multiple apps must fail")
+	}
+	if !strings.Contains(errB, "web") || !strings.Contains(errB, "api") {
+		t.Fatalf("error should name the app dirs, got: %q", errB)
+	}
+}
+
 func diffPreview(want, got string) string {
 	wantLines, gotLines := strings.Split(want, "\n"), strings.Split(got, "\n")
 	var b strings.Builder

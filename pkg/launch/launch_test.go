@@ -124,6 +124,23 @@ func readyClient() *fakeClient {
 	}
 }
 
+func TestExecuteSetsMonorepoBaseDirectory(t *testing.T) {
+	fc := readyClient()
+	in := baseInputs()
+	in.BaseDir = "web"
+	_, err := launch.Execute(context.Background(), fc, in)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	body := fc.createdApp[0]
+	if body.BaseDirectory != "/web" {
+		t.Fatalf("base directory %q, want /web", body.BaseDirectory)
+	}
+	if body.DockerComposeLocation != "/docker-compose.production.yml" {
+		t.Fatalf("compose location %q should stay base-dir-relative", body.DockerComposeLocation)
+	}
+}
+
 func TestExecuteAllFound(t *testing.T) {
 	fc := readyClient()
 	res, err := launch.Execute(context.Background(), fc, baseInputs())
@@ -142,6 +159,9 @@ func TestExecuteAllFound(t *testing.T) {
 	}
 	if body.DockerComposeLocation != "/docker-compose.production.yml" {
 		t.Fatalf("compose location %q", body.DockerComposeLocation)
+	}
+	if body.BaseDirectory != "/" {
+		t.Fatalf("base directory %q, want / for an app at the repo root", body.BaseDirectory)
 	}
 	if body.DockerComposeDomains["app"].Domain != "http://app.example.com:8080" {
 		t.Fatalf("domain not derived: %+v", body.DockerComposeDomains)
@@ -224,6 +244,30 @@ func TestExecuteDomainPortMismatch(t *testing.T) {
 	in.Domain = "http://app.example.com:9090"
 	_, err := launch.Execute(context.Background(), fc, in)
 	if err == nil || !strings.Contains(err.Error(), "9090") || !strings.Contains(err.Error(), "8080") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+// An https domain is preserved with the port appended: the scheme drives TLS in
+// Coolify, so berth must not downgrade it to http.
+func TestExecuteHttpsDomainPreserved(t *testing.T) {
+	fc := readyClient()
+	in := baseInputs()
+	in.Domain = "https://app.example.com"
+	if _, err := launch.Execute(context.Background(), fc, in); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if got := fc.createdApp[0].DockerComposeDomains["app"].Domain; got != "https://app.example.com:8080" {
+		t.Fatalf("domain %q, want https preserved", got)
+	}
+}
+
+func TestExecuteUnsupportedSchemeRejected(t *testing.T) {
+	fc := readyClient()
+	in := baseInputs()
+	in.Domain = "ftp://app.example.com"
+	_, err := launch.Execute(context.Background(), fc, in)
+	if err == nil || !strings.Contains(err.Error(), "ftp") || !strings.Contains(err.Error(), "http:// or https://") {
 		t.Fatalf("got %v", err)
 	}
 }

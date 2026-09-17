@@ -14,6 +14,7 @@ import (
 
 	"github.com/chadsmith12/berth/pkg/cli"
 	"github.com/chadsmith12/berth/pkg/config"
+	"github.com/chadsmith12/berth/pkg/detect"
 	"github.com/chadsmith12/berth/pkg/input"
 	"github.com/chadsmith12/berth/pkg/launch"
 	"github.com/chadsmith12/berth/pkg/output"
@@ -121,18 +122,49 @@ a usage error naming its flag.`
 }
 
 func runLaunch(in launchInput, ctx *cli.CmdContext) (any, error) {
-	sess, err := Open(ctx, SessionOptions{VerifyTeam: true, RepoRoot: in.path})
+	envFlag := ctx.Globals.Env
+
+	// Preliminary app dir, from the flag or the production default, enough to
+	// open the session and resolve placement. The compose file for the chosen
+	// environment is read after the decision is made.
+	prelim, err := composeDir(in.path, defaultStr(envFlag, "production"))
+	if err != nil {
+		return nil, output.Usage(err)
+	}
+
+	sess, err := Open(ctx, SessionOptions{VerifyTeam: true, RepoRoot: prelim})
 	if err != nil {
 		return nil, err
 	}
 	client := sess.Client
-	envName := sess.Env
-	if envName == "" {
-		envName = "production"
-	}
 	term := input.New(ctx.Stdin, ctx.Stderr, ctx.Interactive)
 
-	composePath := filepath.Join(in.path, "docker-compose."+envName+".yml")
+	// The directory holding the compose files, independent of any one env, so
+	// the environment selector can tell which environments can actually launch.
+	scanDir, err := composeScanDir(in.path)
+	if err != nil {
+		return nil, output.Usage(err)
+	}
+
+	projectName, projectUUID, err := resolveLaunchProject(ctx, client, term, in.project)
+	if err != nil {
+		return nil, err
+	}
+	envName, err := resolveLaunchEnv(ctx, client, term, envFlag, projectUUID, scanDir)
+	if err != nil {
+		return nil, err
+	}
+
+	// The environment names the compose file, so now resolve the app dir and
+	// read the compose for it (its port drives the domain, its services the
+	// redis requirement).
+	appDir, err := composeDir(in.path, envName)
+	if err != nil {
+		return nil, output.Usage(err)
+	}
+	sess.RepoRoot = appDir
+
+	composePath := filepath.Join(appDir, "docker-compose."+envName+".yml")
 	composeInfo, composeErr := launch.ReadCompose(composePath)
 	if composeErr != nil {
 		if os.IsNotExist(fmt.Errorf("read %s: %w", composePath, composeErr)) || strings.Contains(composeErr.Error(), "no such file") {
@@ -156,7 +188,7 @@ func runLaunch(in launchInput, ctx *cli.CmdContext) (any, error) {
 		return runLaunchAdopt(sess, in, envName)
 	}
 
-	repoURL, err := gitRemote(in.path)
+	repoURL, err := gitRemote(appDir)
 	if err != nil {
 		return nil, output.Usage(err)
 	}
@@ -166,16 +198,12 @@ func runLaunch(in launchInput, ctx *cli.CmdContext) (any, error) {
 	}
 	branch := in.branch
 	if branch == "" {
-		branch, err = resolveLaunchBranch(ctx, term, in.path)
+		branch, err = resolveLaunchBranch(ctx, term, appDir)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	projectName, err := resolveLaunchProject(ctx, client, term, in.project)
-	if err != nil {
-		return nil, err
-	}
 	serverUUID, err := resolveLaunchServer(ctx, client, term, in.server)
 	if err != nil {
 		return nil, err
@@ -221,6 +249,7 @@ func runLaunch(in launchInput, ctx *cli.CmdContext) (any, error) {
 		DatabaseName:    dbName,
 		RedisUUID:       redisUUID,
 		EnvFileName:     "docker-compose." + envName + ".yml",
+		BaseDir:         launchBaseDir(appDir),
 	})
 	if err != nil {
 		return nil, err
@@ -238,7 +267,7 @@ func runLaunch(in launchInput, ctx *cli.CmdContext) (any, error) {
 		Application: stepView(res.Application),
 		EnvVars:     res.EnvVars,
 		PublicKey:   keyChoice.PublicKey,
-		Checklist:   launchChecklist(in.path, branch, keyChoice, res),
+		Checklist:   launchChecklist(appDir, branch, keyChoice, res),
 	}, nil
 }
 
@@ -355,6 +384,129 @@ func stepView(s launch.Step) StepView {
 	return StepView{Name: s.Name, UUID: s.UUID, Created: s.Created}
 }
 
+// launchBaseDir resolves the app's base directory relative to the git repo
+// root. It walks up from the app directory to the repository; it is empty
+// when the app sits at the repo root.
+func launchBaseDir(appDir string) string {
+	root, found := detect.RepoRoot(appDir)
+	if !found {
+		return ""
+	}
+	rel, err := filepath.Rel(root, appDir)
+	if err != nil || rel == "." {
+		return ""
+	}
+	return filepath.ToSlash(rel)
+}
+
+// composeDir resolves the directory berth generated the compose file into. A
+// path that itself contains docker-compose.<env>.yml is used as is. A git
+// repository root without the file at its top level is descended into the
+// sole subdirectory holding it (the monorepo app), or fails when several do.
+// Any other path is returned unchanged so the missing-compose check reports
+// the real problem.
+func composeDir(path, envName string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	compose := "docker-compose." + envName + ".yml"
+	if fileExists(filepath.Join(abs, compose)) {
+		return abs, nil
+	}
+	if !isGitRoot(abs) {
+		return abs, nil
+	}
+	entries, err := os.ReadDir(abs)
+	if err != nil {
+		return "", err
+	}
+	var matches []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if fileExists(filepath.Join(abs, e.Name(), compose)) {
+			matches = append(matches, e.Name())
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return abs, nil
+	case 1:
+		return filepath.Join(abs, matches[0]), nil
+	default:
+		return "", fmt.Errorf("several directories contain %s (%s) — pass --path <app dir>", compose, strings.Join(matches, ", "))
+	}
+}
+
+func isGitRoot(p string) bool {
+	_, err := os.Stat(filepath.Join(p, ".git"))
+	return err == nil
+}
+
+// composeScanDir resolves the directory holding the compose files,
+// independent of any one environment. A path that itself holds a compose file
+// is used as is; a git repository root without one is descended into the sole
+// subdirectory holding them (the monorepo app). It never requires a compose
+// for a specific environment, so it can report which environments launch can
+// offer before one is chosen.
+func composeScanDir(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	if hasAnyCompose(abs) {
+		return abs, nil
+	}
+	if !isGitRoot(abs) {
+		return abs, nil
+	}
+	entries, err := os.ReadDir(abs)
+	if err != nil {
+		return "", err
+	}
+	var matches []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if hasAnyCompose(filepath.Join(abs, e.Name())) {
+			matches = append(matches, e.Name())
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return abs, nil
+	case 1:
+		return filepath.Join(abs, matches[0]), nil
+	default:
+		return "", fmt.Errorf("several directories contain docker-compose files (%s) — pass --path <app dir>", strings.Join(matches, ", "))
+	}
+}
+
+func hasAnyCompose(dir string) bool {
+	matches, _ := filepath.Glob(filepath.Join(dir, "docker-compose.*.yml"))
+	return len(matches) > 0
+}
+
+// composeEnvSet is the set of environment names with a local compose file
+// under dir. Launch can only offer an environment whose compose exists.
+func composeEnvSet(dir string) map[string]bool {
+	set := map[string]bool{}
+	matches, _ := filepath.Glob(filepath.Join(dir, "docker-compose.*.yml"))
+	for _, m := range matches {
+		name := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(m), "docker-compose."), ".yml")
+		set[name] = true
+	}
+	return set
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
 func gitRemote(path string) (string, error) {
 	out, err := exec.Command("git", "-C", path, "remote", "get-url", "origin").Output()
 	if err != nil {
@@ -386,26 +538,38 @@ func resolveLaunchBranch(ctx *cli.CmdContext, term *input.Terminal, path string)
 	return branch, nil
 }
 
-func resolveLaunchProject(ctx *cli.CmdContext, client launch.Client, term *input.Terminal, flagValue string) (string, error) {
+// resolveLaunchProject returns the chosen project name and, when it already
+// exists, its uuid. A new project has an empty uuid: nothing exists to list its
+// environments against yet, so environment selection falls back to the default.
+func resolveLaunchProject(ctx *cli.CmdContext, client launch.Client, term *input.Terminal, flagValue string) (name, uuid string, err error) {
 	if flagValue != "" {
-		return flagValue, nil
+		projects, err := client.Projects(context.Background())
+		if err != nil {
+			return "", "", err
+		}
+		for _, p := range projects {
+			if p.Name == flagValue {
+				return flagValue, p.UUID, nil
+			}
+		}
+		return flagValue, "", nil
 	}
 	projects, err := client.Projects(context.Background())
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if len(projects) == 0 {
 		if !ctx.Interactive {
-			return "", output.Usage(errors.New("missing --project — no projects exist yet, pass the name to create"))
+			return "", "", output.Usage(errors.New("missing --project — no projects exist yet, pass the name to create"))
 		}
 		name, err := term.Prompt("new project name?")
 		if err != nil || name == "" {
-			return "", output.Usage(errors.New("missing --project — pass the project name to create"))
+			return "", "", output.Usage(errors.New("missing --project — pass the project name to create"))
 		}
-		return name, nil
+		return name, "", nil
 	}
 	if !ctx.Interactive {
-		return "", output.Usage(fmt.Errorf("missing --project — existing projects: %s", nameList(len(projects), func(i int) string { return projects[i].Name })))
+		return "", "", output.Usage(fmt.Errorf("missing --project — existing projects: %s", nameList(len(projects), func(i int) string { return projects[i].Name })))
 	}
 	opts := make([]string, 0, len(projects)+1)
 	for _, p := range projects {
@@ -414,16 +578,83 @@ func resolveLaunchProject(ctx *cli.CmdContext, client launch.Client, term *input
 	opts = append(opts, "Create a new project…")
 	idx, err := term.Select("project?", opts)
 	if err != nil {
-		return "", output.Usage(fmt.Errorf("--project: %w", err))
+		return "", "", output.Usage(fmt.Errorf("--project: %w", err))
 	}
 	if idx == len(projects) {
 		name, err := term.Prompt("new project name?")
 		if err != nil || name == "" {
-			return "", output.Usage(errors.New("missing --project — pass the project name to create"))
+			return "", "", output.Usage(errors.New("missing --project — pass the project name to create"))
 		}
-		return name, nil
+		return name, "", nil
 	}
-	return projects[idx].Name, nil
+	return projects[idx].Name, projects[idx].UUID, nil
+}
+
+// resolveLaunchEnv picks the environment name for the launch. --env always
+// wins. Otherwise, for a project that already exists, the selector offers only
+// the project's environments that have a local compose file (an environment
+// cannot launch without one), plus the option to create a new one — which is
+// validated against the compose files on disk. A project with nothing to list
+// falls back to the production default, as does any non-interactive run, which
+// uses the sanctioned default exactly as the --env global flag would.
+func resolveLaunchEnv(ctx *cli.CmdContext, client launch.Client, term *input.Terminal, envFlag, projectUUID, scanDir string) (string, error) {
+	if envFlag != "" {
+		return envFlag, nil
+	}
+	if projectUUID == "" {
+		return defaultLaunchEnv(ctx, term)
+	}
+	detail, err := client.Project(context.Background(), projectUUID)
+	if err != nil {
+		return "", err
+	}
+	if !ctx.Interactive {
+		return "production", nil
+	}
+	local := composeEnvSet(scanDir)
+	offered := make([]string, 0, len(detail.Environments))
+	for _, e := range detail.Environments {
+		if local[e.Name] {
+			offered = append(offered, e.Name)
+		}
+	}
+	if len(offered) == 0 {
+		return defaultLaunchEnv(ctx, term)
+	}
+	opts := make([]string, 0, len(offered)+1)
+	opts = append(opts, offered...)
+	opts = append(opts, "Create a new environment…")
+	idx, err := term.Select("environment?", opts)
+	if err != nil {
+		return "", output.Usage(fmt.Errorf("--env: %w", err))
+	}
+	if idx < len(offered) {
+		return offered[idx], nil
+	}
+	name, err := term.PromptDefault("new environment name?", "production")
+	if err != nil {
+		return "", output.Usage(fmt.Errorf("--env: %w", err))
+	}
+	if !local[name] {
+		return "", output.Usage(fmt.Errorf("environment %q has no docker-compose.%s.yml in %s — run berth generate --env %s first, then launch again", name, name, scanDir, name))
+	}
+	return name, nil
+}
+
+// defaultLaunchEnv offers the production default interactively and uses it
+// directly elsewhere. Production is the one sanctioned default.
+func defaultLaunchEnv(ctx *cli.CmdContext, term *input.Terminal) (string, error) {
+	if !ctx.Interactive {
+		return "production", nil
+	}
+	name, err := term.PromptDefault("environment name?", "production")
+	if err != nil {
+		return "", output.Usage(fmt.Errorf("--env: %w", err))
+	}
+	if name == "" {
+		return "production", nil
+	}
+	return name, nil
 }
 
 func resolveLaunchServer(ctx *cli.CmdContext, client launch.Client, term *input.Terminal, flagValue string) (string, error) {

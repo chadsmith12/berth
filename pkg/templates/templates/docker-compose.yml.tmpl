@@ -100,6 +100,9 @@ services:
         restart: unless-stopped
         healthcheck:
             disable: true
+        # Coolify custom field: this service is not a web server, so it must not
+        # determine the stack's health status (which Coolify aggregates).
+        exclude_from_hc: true
 {{- else}}
 {{- range $i := seq .Project.Workers}}
     worker-{{$i}}:
@@ -121,6 +124,9 @@ services:
         restart: unless-stopped
         healthcheck:
             disable: true
+        # Coolify custom field: this service is not a web server, so it must not
+        # determine the stack's health status (which Coolify aggregates).
+        exclude_from_hc: true
 {{- end}}
 {{- end}}
 
@@ -141,6 +147,9 @@ services:
         restart: unless-stopped
         healthcheck:
             disable: true
+        # Coolify custom field: this service is not a web server, so it must not
+        # determine the stack's health status (which Coolify aggregates).
+        exclude_from_hc: true
 {{- end}}
 
 volumes:

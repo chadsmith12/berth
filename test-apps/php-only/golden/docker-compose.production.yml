@@ -65,6 +65,9 @@ services:
         restart: unless-stopped
         healthcheck:
             disable: true
+        # Coolify custom field: this service is not a web server, so it must not
+        # determine the stack's health status (which Coolify aggregates).
+        exclude_from_hc: true
     worker-2:
         <<: *app-image
         command: >
@@ -84,6 +87,9 @@ services:
         restart: unless-stopped
         healthcheck:
             disable: true
+        # Coolify custom field: this service is not a web server, so it must not
+        # determine the stack's health status (which Coolify aggregates).
+        exclude_from_hc: true
 
 volumes:
     app-storage:

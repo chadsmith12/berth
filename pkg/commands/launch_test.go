@@ -449,6 +449,43 @@ func TestLaunchRecordsGitRepoNormalized(t *testing.T) {
 	}
 }
 
+func TestLaunchCustomEnvNonInteractive(t *testing.T) {
+	fc, _ := startLaunch(t)
+	dir := launchProject(t, launchCompose)
+	if err := os.WriteFile(filepath.Join(dir, "docker-compose.staging.yml"), []byte(launchCompose), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out, errB := runCLI([]string{
+		"launch", "--path", dir, "--project", "pmc", "--env", "staging",
+		"--branch", "main", "--domain", "http://app.example.com",
+		"--database", "none", "--key", "key-1",
+	}, "")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q, stdout %q", code, errB, out)
+	}
+	if !strings.Contains(out, "[created] pmc-staging") {
+		t.Fatalf("stdout %q", out)
+	}
+	app := fc.app(appNameOf(t, dir))
+	if app == nil {
+		t.Fatal("no application created on the fake")
+	}
+	if got := app["environment_name"]; got != "staging" {
+		t.Fatalf("environment_name %v", got)
+	}
+	if got := app["docker_compose_location"]; got != "/docker-compose.staging.yml" {
+		t.Fatalf("docker_compose_location %v", got)
+	}
+	body, err := os.ReadFile(filepath.Join(dir, ".config", "berth.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"staging"`) {
+		t.Fatalf("registry %s", body)
+	}
+}
+
 func TestLaunchRefusesRelinkWithoutForce(t *testing.T) {
 	fc, _ := startLaunch(t)
 	dir := launchProject(t, launchCompose)
@@ -482,6 +519,28 @@ func TestLaunchMissingCompose(t *testing.T) {
 	_, _, errB := runCLI([]string{"launch", "--path", dir, "--project", "pmc"}, "")
 	if !strings.Contains(errB, "berth generate") {
 		t.Fatalf("stderr %q", errB)
+	}
+}
+
+// An environment chosen that has no compose file is refused before anything is
+// created in Coolify; the error names the generate step to run.
+func TestLaunchEnvWithoutComposeFlag(t *testing.T) {
+	fc, _ := startLaunch(t)
+	dir := launchProject(t, launchCompose) // only docker-compose.production.yml exists
+
+	code, _, errB := runCLI([]string{
+		"launch", "--path", dir, "--project", "pmc", "--env", "staging",
+		"--branch", "main", "--domain", "http://app.example.com",
+		"--database", "none", "--key", "key-1",
+	}, "")
+	if code != 2 {
+		t.Fatalf("exit %d, stderr %q", code, errB)
+	}
+	if !strings.Contains(errB, "docker-compose.staging.yml") || !strings.Contains(errB, "berth generate --env staging") {
+		t.Fatalf("stderr %q", errB)
+	}
+	if n := len(fc.apps); n != 0 {
+		t.Fatalf("expected no application created, got %d", n)
 	}
 }
 
@@ -521,5 +580,38 @@ func TestLaunchMissingKeyNonInteractive(t *testing.T) {
 	}, "")
 	if !strings.Contains(errB, "missing --key") {
 		t.Fatalf("stderr %q", errB)
+	}
+}
+
+func TestLaunchMonorepoFindsComposeInSubdir(t *testing.T) {
+	startLaunch(t)
+	root := t.TempDir()
+	app := filepath.Join(root, "web")
+	if err := os.MkdirAll(app, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(app, "docker-compose.production.yml"), []byte(launchCompose), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", "init", "-q")
+	cmd.Dir = root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	remote := exec.Command("git", "-C", root, "remote", "add", "origin", "ssh://git@git.example.com:2222/me/app.git")
+	if out, err := remote.CombinedOutput(); err != nil {
+		t.Fatalf("git remote: %v: %s", err, out)
+	}
+
+	// launch --path <repo root> must descend into web/ to find the compose.
+	// Reaching "missing --key" (a decision made after the compose read at
+	// docker-compose.production.yml) proves the file was located and parsed in
+	// the app subdir.
+	_, _, errB := runCLI([]string{
+		"launch", "--path", root, "--project", "pmc", "--branch", "main",
+		"--domain", "http://app.example.com", "--database", "none",
+	}, "")
+	if !strings.Contains(errB, "missing --key") {
+		t.Fatalf("stderr %q, want the launch decisions to proceed past the compose read in the app subdir", errB)
 	}
 }
