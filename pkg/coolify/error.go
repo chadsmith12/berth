@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -76,8 +77,9 @@ func parseError(resp *http.Response, body []byte, team string) *ApiError {
 	}
 
 	var payload struct {
-		Message   string           `json:"message"`
-		Conflicts []DomainConflict `json:"conflicts"`
+		Message   string              `json:"message"`
+		Conflicts []DomainConflict    `json:"conflicts"`
+		Errors    map[string][]string `json:"errors"`
 	}
 
 	err := json.Unmarshal(body, &payload)
@@ -87,6 +89,9 @@ func parseError(resp *http.Response, body []byte, team string) *ApiError {
 	}
 	e.Message = payload.Message
 	e.Conflicts = payload.Conflicts
+	if len(payload.Errors) > 0 {
+		e.Message = strings.TrimSpace(e.Message + " — " + flattenFieldErrors(payload.Errors))
+	}
 
 	if v := resp.Header.Get("Retry-After"); v != "" {
 		if secs, err := strconv.Atoi(v); err == nil {
@@ -94,4 +99,20 @@ func parseError(resp *http.Response, body []byte, team string) *ApiError {
 		}
 	}
 	return e
+}
+
+// flattenFieldErrors renders Coolify's 422 "errors" map deterministically:
+// "field: message; other: message". Without it the actionable field is lost
+// behind a bare "Validation failed.".
+func flattenFieldErrors(errors map[string][]string) string {
+	fields := make([]string, 0, len(errors))
+	for field := range errors {
+		fields = append(fields, field)
+	}
+	sort.Strings(fields)
+	parts := make([]string, 0, len(fields))
+	for _, field := range fields {
+		parts = append(parts, fmt.Sprintf("%s: %s", field, strings.Join(errors[field], "; ")))
+	}
+	return strings.Join(parts, "; ")
 }

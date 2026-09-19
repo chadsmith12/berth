@@ -375,23 +375,25 @@ credentials.`
 }
 
 type LogoutDataView struct {
-	Instance string `json:"instance"`
-	TeamID   int    `json:"team_id,omitempty"`
-	TeamName string `json:"team_name,omitempty"`
-	Removed  bool   `json:"removed"`
+	Instance string    `json:"instance"`
+	Team     *TeamView `json:"team,omitempty"`
+	Removed  bool      `json:"removed"`
 }
 
 func (v LogoutDataView) WriteText(w io.Writer) {
 	if v.Removed {
-		if v.TeamName != "" {
-			fmt.Fprintf(w, "✓ removed the token for team %q (id %d) on %s\n", v.TeamName, v.TeamID, v.Instance)
-		} else {
-			fmt.Fprintf(w, "✓ removed the token for team id %d on %s\n", v.TeamID, v.Instance)
+		switch {
+		case v.Team != nil && v.Team.Name != "":
+			fmt.Fprintf(w, "✓ removed the token for team %q (id %d) on %s\n", v.Team.Name, v.Team.Id, v.Instance)
+		case v.Team != nil:
+			fmt.Fprintf(w, "✓ removed the token for team id %d on %s\n", v.Team.Id, v.Instance)
+		default:
+			fmt.Fprintf(w, "✓ removed the token on %s\n", v.Instance)
 		}
 		return
 	}
-	if v.TeamName != "" || v.TeamID > 0 {
-		fmt.Fprintf(w, "no token stored for team %q (id %d) on %s\n", v.TeamName, v.TeamID, v.Instance)
+	if v.Team != nil {
+		fmt.Fprintf(w, "no token stored for team %q (id %d) on %s\n", v.Team.Name, v.Team.Id, v.Instance)
 		return
 	}
 	fmt.Fprintf(w, "no tokens stored for %s\n", v.Instance)
@@ -452,30 +454,30 @@ func runAuthLogout(urlFlag string, teamFlag int, ctx *cli.CmdContext) (any, erro
 	}
 	tokens := config.TokensFor(creds, sess.Placement.URL)
 
-	teamID, teamName := 0, ""
+	var team *TeamView
 	if sess.Placement.Team != nil {
-		teamID, teamName = sess.Placement.Team.ID, sess.Placement.Team.Name
+		team = &TeamView{Id: sess.Placement.Team.ID, Name: sess.Placement.Team.Name}
 	}
-	if teamID == 0 {
+	if team == nil {
 		switch len(tokens) {
 		case 0:
 			return LogoutDataView{Instance: sess.Placement.URL}, nil
 		case 1:
-			teamID, teamName = tokens[0].ID, tokens[0].Name
+			team = &TeamView{Id: tokens[0].ID, Name: tokens[0].Name}
 		default:
 			return nil, output.Usage(fmt.Errorf("several tokens are stored for %s (%s) — pass --team to choose which to remove", sess.Placement.URL, teamIDList(tokens)))
 		}
-	} else if teamName == "" {
-		teamName = teamNameForID(tokens, teamID)
+	} else if team.Name == "" {
+		team.Name = teamNameForID(tokens, team.Id)
 	}
 
-	removed := config.RemoveToken(&creds, sess.Placement.URL, teamID)
+	removed := config.RemoveToken(&creds, sess.Placement.URL, team.Id)
 	if removed {
 		if err := config.SaveCredentials(credPath, creds); err != nil {
 			return nil, err
 		}
 	}
-	return LogoutDataView{Instance: sess.Placement.URL, TeamID: teamID, TeamName: teamName, Removed: removed}, nil
+	return LogoutDataView{Instance: sess.Placement.URL, Team: team, Removed: removed}, nil
 }
 
 func firstNonEmpty(values ...string) string {

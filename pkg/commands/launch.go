@@ -175,13 +175,8 @@ func runLaunch(in launchInput, ctx *cli.CmdContext) (any, error) {
 	}
 
 	if existing, ok := linkedUUID(sess, envName); ok {
-		if in.uuid == "" || in.uuid != existing {
-			if in.uuid == existing {
-				return adoptView(existing), nil
-			}
-			if !in.force {
-				return nil, output.Usage(fmt.Errorf("environment %q is already linked to application %s — pass --uuid %s to adopt it, or --force to relink", envName, existing, existing))
-			}
+		if !in.force && (in.uuid == "" || in.uuid != existing) {
+			return nil, output.Usage(fmt.Errorf("environment %q is already linked to application %s — pass --uuid %s to adopt it, or --force to relink", envName, existing, existing))
 		}
 	}
 
@@ -335,10 +330,6 @@ func runLaunchAdopt(sess *Session, in launchInput, envName string) (any, error) 
 		Adopted:     true,
 		Application: StepView{Name: app.Name, UUID: app.UUID},
 	}, nil
-}
-
-func adoptView(uuid string) any {
-	return LaunchDataView{Adopted: true, Application: StepView{UUID: uuid}}
 }
 
 // linkedUUID reads the recorded uuid for the environment, if any. Errors are

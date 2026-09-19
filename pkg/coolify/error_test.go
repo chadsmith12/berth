@@ -1,13 +1,33 @@
 package coolify_test
 
 import (
+	"context"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/chadsmith12/berth/pkg/coolify"
 )
+
+func TestError422FieldErrorsIncluded(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		w.Write([]byte(`{"message":"Validation failed.","errors":{"domain":["The domain field is required."],"port":["The port must be an integer."]}}`))
+	}))
+	defer srv.Close()
+
+	_, err := coolify.New(srv.URL, "tok").CurrentTeam(context.Background())
+	if err == nil {
+		t.Fatal("expected a 422 error")
+	}
+	for _, want := range []string{"domain: The domain field is required.", "port: The port must be an integer."} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("missing %q in %q", want, err.Error())
+		}
+	}
+}
 
 func TestError404NamesWrongTeam(t *testing.T) {
 	plain := &coolify.ApiError{

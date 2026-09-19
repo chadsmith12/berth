@@ -128,17 +128,21 @@ func runDeploy(in deployInput, ctx *cli.CmdContext) (any, error) {
 		DeploymentUUID: depUUID,
 		Timeout:        in.timeout,
 	})
+	// --json is one final envelope, never an event stream: the live dots and
+	// log lines are suppressed (the tail rides in the envelope instead).
+	stream := ctx.Stdout
+	if ctx.Globals.JSON {
+		stream = io.Discard
+	}
 	start := time.Now()
 	var terminal deploy.Event
-	streamed := false
 	for e := range events {
 		switch e.Kind {
 		case deploy.KindStatus:
-			fmt.Fprintf(ctx.Stdout, "● %s\n", e.Status)
+			fmt.Fprintf(stream, "● %s\n", e.Status)
 		case deploy.KindLog:
-			streamed = true
 			for _, line := range e.Logs {
-				fmt.Fprintf(ctx.Stdout, "  %s\n", strings.TrimRight(line, "\r"))
+				fmt.Fprintf(stream, "  %s\n", strings.TrimRight(line, "\r"))
 			}
 		case deploy.KindDone, deploy.KindFailed, deploy.KindError:
 			terminal = e
@@ -166,7 +170,7 @@ func runDeploy(in deployInput, ctx *cli.CmdContext) (any, error) {
 		DurationSeconds: duration,
 		LogsURL:         logsURL(sess, detail),
 		Tail:            logTail(detail, 20),
-		Streamed:        streamed,
+		Streamed:        stream == ctx.Stdout,
 	}
 	if detail.Status != "finished" {
 		view.Tail = logTail(detail, 20)

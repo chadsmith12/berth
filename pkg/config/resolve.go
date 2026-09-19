@@ -8,11 +8,12 @@ import (
 )
 
 // Overrides are values supplied by flags or the process environment. Highest
-// precedence in placement resolution. TeamID 0 means unset.
+// precedence in placement resolution. TeamID is nil when unset — team 0 is a
+// real team id.
 type Overrides struct {
 	Profile string
 	URL     string
-	TeamID  int
+	TeamID  *int
 	Project string
 }
 
@@ -89,8 +90,8 @@ func Resolve(opts ResolveOptions) (Placement, error) {
 
 	teamID, teamFound := 0, false
 	switch {
-	case opts.Overrides.TeamID != 0:
-		teamID, teamFound = opts.Overrides.TeamID, true
+	case opts.Overrides.TeamID != nil:
+		teamID, teamFound = *opts.Overrides.TeamID, true
 	case envString("BERTH_TEAM") != "":
 		teamID, _ = strconv.Atoi(envString("BERTH_TEAM"))
 		teamFound = true

@@ -174,6 +174,21 @@ func TestExecuteAllFound(t *testing.T) {
 	}
 }
 
+func TestExecuteRefusesDuplicateEnvironmentName(t *testing.T) {
+	fc := readyClient()
+	fc.details["proj-1"] = coolify.ProjectDetail{
+		Project: coolify.Project{UUID: "proj-1", Name: "pmc"},
+		Environments: []coolify.Environment{
+			{UUID: "env-a", Name: "production"},
+			{UUID: "env-b", Name: "production"},
+		},
+	}
+	_, err := launch.Execute(context.Background(), fc, baseInputs())
+	if err == nil || !strings.Contains(err.Error(), "rename one") {
+		t.Fatalf("got %v", err)
+	}
+}
+
 func TestExecuteCreatesMissingProjectAndEnv(t *testing.T) {
 	fc := readyClient()
 	fc.projects = nil

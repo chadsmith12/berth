@@ -103,9 +103,10 @@ func scanApp(plan plan.Plan, appPath string) (plan.Plan, error) {
 	if _, ok := composer.Require["laravel/framework"]; !ok {
 		return plan, ErrInvalidFramework
 	}
-	if _, ok := composer.Require["php"]; ok {
-		if err := readPhpVersion(composer.Require["php"], &plan); err != nil {
-			return plan, err
+	if constraint, ok := composer.Require["php"]; ok {
+		if v := minSatisfyingPhp(constraint); v != "" {
+			plan.Note(fmt.Sprintf("php: %q in composer.json - using php version: %s", constraint, v))
+			plan.Project.PhpVersion = v
 		}
 	}
 	// The composer.json floor is not enough: a lock resolved on a newer PHP
@@ -364,19 +365,6 @@ func packageManager(path string, p *plan.Plan) plan.PackageManager {
 
 	p.Note("package manager: no lock file found. Builds will not be reproducible. Assuming npm")
 	return plan.PM_NPM
-}
-
-func readPhpVersion(constraint string, plan *plan.Plan) error {
-	re := regexp.MustCompile(`(\d+)\.(\d+)`)
-	match := re.FindStringSubmatch(constraint)
-	if len(match) != 3 {
-		return errors.New("invalid php version constraint")
-	}
-	version := match[1] + "." + match[2]
-	note := fmt.Sprintf("php: %q in composer.json - using php version: %s", constraint, version)
-	plan.Note(note)
-	plan.Project.PhpVersion = version
-	return nil
 }
 
 const defaultPhpVersion = "8.4"

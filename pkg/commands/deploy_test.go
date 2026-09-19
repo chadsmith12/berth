@@ -37,6 +37,30 @@ func TestDeployJSONFinalEnvelope(t *testing.T) {
 	}
 }
 
+func TestDeployJSONIsOneEnvelopeWithTail(t *testing.T) {
+	fc, _ := startLaunch(t)
+	fc.apps["app-1"] = map[string]any{"uuid": "app-1", "name": "app"}
+	logs := `[{"output":"composer install starting","hidden":false},` +
+		`{"output":"Your requirements could not be resolved.","hidden":false}]`
+	fc.depScript = [][]string{{"in_progress", logs}, {"failed", logs}}
+
+	code, out, errB := runCLI([]string{"deploy", "--uuid", "app-1", "--json"}, "")
+	if code != 1 {
+		t.Fatalf("exit %d, stderr %q, stdout %q", code, errB, out)
+	}
+	if strings.Contains(out, "● ") || strings.Contains(out, "\n  ") {
+		t.Fatalf("json mode must not stream the event log to stdout: %q", out)
+	}
+	if strings.Count(out, "\n") > 1 {
+		t.Fatalf("json mode must emit exactly one document: %q", out)
+	}
+	for _, want := range []string{`"success":false`, `"log_tail"`, `Your requirements could not be resolved.`} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in %q", want, out)
+		}
+	}
+}
+
 func TestDeployFailureExitsOne(t *testing.T) {
 	fc, _ := startLaunch(t)
 	fc.apps["app-1"] = map[string]any{"uuid": "app-1", "name": "app"}

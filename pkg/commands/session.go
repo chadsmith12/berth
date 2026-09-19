@@ -63,7 +63,7 @@ func Open(ctx *cli.CmdContext, opts SessionOptions) (*Session, error) {
 		if err != nil {
 			return nil, output.Usage(fmt.Errorf("--team must be a team id (an integer), got %q", opts.Team))
 		}
-		overrides.TeamID = id
+		overrides.TeamID = &id
 	}
 	if ctx.Globals.Profile != "" {
 		overrides.Profile = ctx.Globals.Profile

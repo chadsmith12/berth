@@ -177,16 +177,24 @@ func resolveEnvironment(ctx context.Context, client Client, projectUUID, name st
 	if err != nil {
 		return Step{}, err
 	}
+	var matches []coolify.Environment
 	for _, e := range detail.Environments {
 		if e.Name == name {
-			return Step{Name: name, UUID: e.UUID}, nil
+			matches = append(matches, e)
 		}
 	}
-	uuid, err := client.CreateEnvironment(ctx, projectUUID, name)
-	if err != nil {
-		return Step{}, err
+	switch len(matches) {
+	case 0:
+		uuid, err := client.CreateEnvironment(ctx, projectUUID, name)
+		if err != nil {
+			return Step{}, err
+		}
+		return Step{Name: name, UUID: uuid, Created: true}, nil
+	case 1:
+		return Step{Name: name, UUID: matches[0].UUID}, nil
+	default:
+		return Step{}, fmt.Errorf("%d environments named %q — rename one in Coolify before launching", len(matches), name)
 	}
-	return Step{Name: name, UUID: uuid, Created: true}, nil
 }
 
 func resolveServer(ctx context.Context, client Client, uuid string) (Step, error) {

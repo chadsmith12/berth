@@ -542,6 +542,35 @@ func TestAuthLogoutTeamFlagSelects(t *testing.T) {
 	}
 }
 
+func TestAuthLogoutTeamZeroRemovesOnlyTeamZero(t *testing.T) {
+	credPath := withIsolatedConfig(t)
+	creds := config.Credentials{}
+	config.UpsertToken(&creds, "https://coolify.example.com", config.TeamToken{ID: 0, Name: "Root Team", Token: "0|root"})
+	config.UpsertToken(&creds, "https://coolify.example.com", config.TeamToken{ID: 3, Name: "Client Work", Token: "3|bbb"})
+	if err := config.SaveCredentials(credPath, creds); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BERTH_URL", "https://coolify.example.com")
+
+	code, out, errB := runCLI([]string{"auth", "logout", "--team", "0"}, "")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, errB)
+	}
+	if !strings.Contains(out, `team "Root Team" (id 0)`) {
+		t.Fatalf("stdout %q", out)
+	}
+	after, err := config.LoadCredentials(credPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := config.FindToken(after, "https://coolify.example.com", 0); ok {
+		t.Fatal("team 0 token should be gone")
+	}
+	if tok, ok := config.FindToken(after, "https://coolify.example.com", 3); !ok || tok != "3|bbb" {
+		t.Fatalf("team 3 token should remain, got %q %v", tok, ok)
+	}
+}
+
 func TestAuthListEmpty(t *testing.T) {
 	withIsolatedConfig(t)
 

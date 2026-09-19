@@ -106,6 +106,21 @@ func TestScanRaisesPhpFromComposerLock(t *testing.T) {
 	}
 }
 
+func TestScanIgnoresUpperBoundPhpConstraint(t *testing.T) {
+	dir := writeProject(t, `{"require": {"laravel/framework": "^11.0", "php": "<8.5"}}`, "")
+
+	p, err := Scan(dir)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if p.Project.PhpVersion == "8.5" {
+		t.Fatalf("an upper bound must not become the floor, got %q", p.Project.PhpVersion)
+	}
+	if p.Project.PhpVersion != defaultPhpVersion {
+		t.Fatalf("php %q, want default %s", p.Project.PhpVersion, defaultPhpVersion)
+	}
+}
+
 func TestScanKeepsJsonVersionWhenHigher(t *testing.T) {
 	dir := writeProject(t, `{"require": {"laravel/framework": "^11.0", "php": "^8.5"}}`, "")
 	lock := `{

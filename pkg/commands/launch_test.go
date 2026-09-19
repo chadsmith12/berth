@@ -512,6 +512,31 @@ func TestLaunchRefusesRelinkWithoutForce(t *testing.T) {
 	}
 }
 
+func TestLaunchAdoptsLinkedUUIDIdempotently(t *testing.T) {
+	fc, _ := startLaunch(t)
+	dir := launchProject(t, launchCompose)
+
+	args := []string{
+		"launch", "--path", dir, "--project", "pmc", "--branch", "main",
+		"--domain", "http://app.example.com", "--database", "none", "--key", "key-1",
+	}
+	if code, _, errB := runCLI(args, ""); code != 0 {
+		t.Fatalf("first exit %d, stderr %q", code, errB)
+	}
+	linked := appNameOf(t, dir)
+	// GET /applications returns the compose-domain blob as an encoded string;
+	// the create body is a map, so give the fake the read shape it needs.
+	fc.apps[linked] = map[string]any{"uuid": linked, "name": "app"}
+
+	code, _, errB := runCLI(append(args, "--uuid", linked), "")
+	if code != 0 {
+		t.Fatalf("re-adopting the linked uuid must succeed, exit %d stderr %q", code, errB)
+	}
+	if got := appNameOf(t, dir); got != linked {
+		t.Fatalf("uuid changed: %q -> %q", linked, got)
+	}
+}
+
 func TestLaunchMissingCompose(t *testing.T) {
 	startLaunch(t)
 	dir := t.TempDir()

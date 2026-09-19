@@ -1,7 +1,6 @@
 package input
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"io"
@@ -18,8 +17,6 @@ type Terminal struct {
 	in          io.Reader
 	out         io.Writer
 	interactive bool
-
-	reader *bufio.Reader
 }
 
 func New(in io.Reader, out io.Writer, interactive bool) *Terminal {
@@ -27,7 +24,30 @@ func New(in io.Reader, out io.Writer, interactive bool) *Terminal {
 		in:          in,
 		out:         out,
 		interactive: interactive,
-		reader:      bufio.NewReader(in),
+	}
+}
+
+// readLine reads one line without consuming past its newline. A buffered
+// reader would read ahead and strand input meant for the next prompt — a
+// pasted "url\ntoken\n" must leave the token for the second prompt, even when
+// two Terminals share one stdin.
+func (t *Terminal) readLine() (string, error) {
+	var line strings.Builder
+	buf := make([]byte, 1)
+	for {
+		n, err := t.in.Read(buf)
+		if n > 0 {
+			switch buf[0] {
+			case '\n':
+				return line.String(), nil
+			case '\r':
+			default:
+				line.WriteByte(buf[0])
+			}
+		}
+		if err != nil {
+			return line.String(), err
+		}
 	}
 }
 
@@ -36,7 +56,7 @@ func (t *Terminal) Prompt(label string) (string, error) {
 		return "", ErrNotInteractive
 	}
 	fmt.Fprintf(t.out, "%s ", label)
-	line, err := t.reader.ReadString('\n')
+	line, err := t.readLine()
 	if err != nil && !errors.Is(err, io.EOF) && line == "" {
 		return "", fmt.Errorf("read input: %w", err)
 	}
@@ -55,7 +75,7 @@ func (t *Terminal) PromptPassword(label string) (string, error) {
 		}
 		return strings.TrimSpace(string(b)), nil
 	}
-	line, err := t.reader.ReadString('\n')
+	line, err := t.readLine()
 	if err != nil && !errors.Is(err, io.EOF) && line == "" {
 		return "", fmt.Errorf("read input: %w", err)
 	}

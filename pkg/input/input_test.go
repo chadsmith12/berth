@@ -79,6 +79,20 @@ func TestPromptLinesSequentially(t *testing.T) {
 	}
 }
 
+func TestTwoTerminalsOverOneReaderDoNotStrandInput(t *testing.T) {
+	var out bytes.Buffer
+	in := strings.NewReader("url\ntoken\n")
+
+	first := input.New(in, &out, true)
+	if got, err := first.Prompt("url?"); err != nil || got != "url" {
+		t.Fatalf("first prompt got %q err %v", got, err)
+	}
+	second := input.New(in, &out, true)
+	if got, err := second.Prompt("token?"); err != nil || got != "token" {
+		t.Fatalf("second prompt must see the un-consumed line, got %q err %v", got, err)
+	}
+}
+
 func TestPromptIntParses(t *testing.T) {
 	var out bytes.Buffer
 	term := input.New(strings.NewReader("3\n"), &out, true)

@@ -163,6 +163,41 @@ func TestResolveFieldOverrideBeatsProfile(t *testing.T) {
 	}
 }
 
+func TestResolveOverrideTeamZero(t *testing.T) {
+	root := t.TempDir()
+	writeRepoConfig(t, root, ".config/berth.json", repoConfigBody)
+	userPath := filepath.Join(t.TempDir(), "config.json")
+	saveUserProfile(t, userPath, "internal", "https://user.example.com", 1, "Internal")
+	t.Setenv("BERTH_URL", "https://env.example.com")
+	t.Setenv("BERTH_TEAM", "7")
+
+	zero := 0
+	p, err := config.Resolve(config.ResolveOptions{
+		RepoRoot:  root,
+		UserPath:  userPath,
+		Overrides: config.Overrides{TeamID: &zero},
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if p.Team == nil || p.Team.ID != 0 {
+		t.Fatalf("an explicit --team 0 must win, got %+v", p)
+	}
+}
+
+func TestResolveNilTeamDoesNotOverride(t *testing.T) {
+	userPath := filepath.Join(t.TempDir(), "config.json")
+	saveUserProfile(t, userPath, "internal", "https://user.example.com", 4, "Internal")
+
+	p, err := config.Resolve(config.ResolveOptions{UserPath: userPath})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if p.Team == nil || p.Team.ID != 4 {
+		t.Fatalf("nil override must not clobber the profile team, got %+v", p)
+	}
+}
+
 func TestResolveTeamZeroFromProfile(t *testing.T) {
 	userPath := filepath.Join(t.TempDir(), "config.json")
 	saveUserProfile(t, userPath, "root", "https://user.example.com", 0, "Root Team")
@@ -185,12 +220,13 @@ func TestResolvePrecedenceOverridesBeatsAll(t *testing.T) {
 	t.Setenv("BERTH_TEAM", "7")
 	t.Setenv("BERTH_PROJECT", "env-project")
 
+	teamID := 9
 	p, err := config.Resolve(config.ResolveOptions{
 		RepoRoot: root,
 		UserPath: userPath,
 		Overrides: config.Overrides{
 			URL:     "https://flag.example.com",
-			TeamID:  9,
+			TeamID:  &teamID,
 			Project: "flag-project",
 		},
 	})

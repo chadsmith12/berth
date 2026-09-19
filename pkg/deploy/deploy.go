@@ -52,7 +52,8 @@ const (
 
 // Follow streams a deployment's progress until it reaches a terminal state,
 // the timeout expires, or ctx is cancelled. The channel is closed at the
-// end; the last event is always terminal (Done, Failed, or Error).
+// end; a terminal event (Done, Failed, or Error) is emitted unless the
+// caller cancelled the context.
 func Follow(ctx context.Context, client Client, opts Options) <-chan Event {
 	events := make(chan Event)
 	interval := opts.PollInterval
@@ -81,8 +82,8 @@ func Follow(ctx context.Context, client Client, opts Options) <-chan Event {
 			}
 		}
 
-		terminal := func(kind EventKind, d coolify.Deployment, msg string, err error) bool {
-			return emit(Event{Kind: kind, Status: d.Status, Message: msg, Err: err})
+		terminal := func(kind EventKind, status, msg string, err error) bool {
+			return emit(Event{Kind: kind, Status: status, Message: msg, Err: err})
 		}
 
 		var lastStatus, lastBlob string
@@ -98,9 +99,16 @@ func Follow(ctx context.Context, client Client, opts Options) <-chan Event {
 			return client.Deployment(watchCtx, opts.DeploymentUUID)
 		}
 
+		// giveUp owns the terminal timeout transition so it is reached the
+		// same way whether the deadline wins the select or surfaces as a
+		// poll error on the dead context.
+		giveUp := func() {
+			terminal(KindFailed, lastStatus, "timed out after "+opts.Timeout.String(), nil)
+		}
+
 		first, err := poll()
 		if err != nil {
-			terminal(KindError, coolify.Deployment{}, "", err)
+			terminal(KindError, "", "", err)
 			return
 		}
 		lastStatus, lastBlob = first.Status, blob(first)
@@ -111,8 +119,7 @@ func Follow(ctx context.Context, client Client, opts Options) <-chan Event {
 			select {
 			case <-watchCtx.Done():
 				if ctx.Err() == nil {
-					terminal(KindFailed, coolify.Deployment{Status: lastStatus},
-						"timed out after "+opts.Timeout.String(), nil)
+					giveUp()
 				}
 				return
 			case <-tick.C:
@@ -120,9 +127,15 @@ func Follow(ctx context.Context, client Client, opts Options) <-chan Event {
 
 			d, err := poll()
 			if err != nil {
+				if watchCtx.Err() != nil {
+					if ctx.Err() == nil {
+						giveUp()
+					}
+					return
+				}
 				failures++
 				if failures > 3 {
-					terminal(KindError, coolify.Deployment{}, "", err)
+					terminal(KindError, "", "", err)
 					return
 				}
 				continue
@@ -142,10 +155,10 @@ func Follow(ctx context.Context, client Client, opts Options) <-chan Event {
 
 			switch {
 			case d.Status == statusFinished:
-				terminal(KindDone, d, "", nil)
+				terminal(KindDone, d.Status, "", nil)
 				return
 			case d.Status == statusFailed || strings.Contains(d.Status, "cancel"):
-				terminal(KindFailed, d, "", nil)
+				terminal(KindFailed, d.Status, "", nil)
 				return
 			}
 		}

@@ -175,6 +175,27 @@ func TestFollowTimeout(t *testing.T) {
 	}
 }
 
+type ctxErrClient struct{}
+
+func (ctxErrClient) Deployment(ctx context.Context, uuid string) (coolify.Deployment, error) {
+	return coolify.Deployment{}, ctx.Err()
+}
+
+// The deadline racing the tick must always surface as a timeout failure, not
+// as a KindError carrying context.DeadlineExceeded.
+func TestFollowDeadlineSurfacesAsTimeout(t *testing.T) {
+	events := deploy.Follow(context.Background(), ctxErrClient{}, deploy.Options{
+		DeploymentUUID: "d1",
+		PollInterval:   10 * time.Millisecond,
+		Timeout:        10 * time.Millisecond,
+	})
+	got := collect(t, events)
+	last := got[len(got)-1]
+	if last.Kind != deploy.KindFailed || !strings.Contains(last.Message, "timed out") {
+		t.Fatalf("deadline must surface as timed out, got %+v", last)
+	}
+}
+
 func TestFollowContextCancelClosesQuietly(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	client := &scriptClient{errAt: -1, states: []coolify.Deployment{{Status: "in_progress"}}}
