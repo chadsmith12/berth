@@ -40,7 +40,7 @@ func (c *Client) SetTeam(name string, id int) {
 
 func (c *Client) CurrentTeam(ctx context.Context) (Team, error) {
 	var team Team
-	err := c.get(ctx, "/teams/current", &team)
+	err := c.get(ctx, "/team", &team)
 	if err != nil {
 		return Team{}, err
 	}

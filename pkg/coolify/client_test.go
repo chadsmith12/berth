@@ -15,7 +15,7 @@ func TestCurrentTeam(t *testing.T) {
 	var gotAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
-		if r.URL.Path != "/api/v1/teams/current" {
+		if r.URL.Path != "/api/v1/team" {
 			t.Errorf("path %q", r.URL.Path)
 		}
 		w.Write([]byte(`{"id":3,"name":"Client Work","description":"x"}`))

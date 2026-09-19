@@ -15,27 +15,27 @@ import (
 var ErrNotInteractive = errors.New("input required but stdin is not interactive")
 
 type Terminal struct {
-	In          io.Reader
-	Out         io.Writer
-	Interactive bool
+	in          io.Reader
+	out         io.Writer
+	interactive bool
 
 	reader *bufio.Reader
 }
 
 func New(in io.Reader, out io.Writer, interactive bool) *Terminal {
 	return &Terminal{
-		In:          in,
-		Out:         out,
-		Interactive: interactive,
+		in:          in,
+		out:         out,
+		interactive: interactive,
 		reader:      bufio.NewReader(in),
 	}
 }
 
 func (t *Terminal) Prompt(label string) (string, error) {
-	if !t.Interactive {
+	if !t.interactive {
 		return "", ErrNotInteractive
 	}
-	fmt.Fprintf(t.Out, "%s ", label)
+	fmt.Fprintf(t.out, "%s ", label)
 	line, err := t.reader.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) && line == "" {
 		return "", fmt.Errorf("read input: %w", err)
@@ -46,10 +46,10 @@ func (t *Terminal) Prompt(label string) (string, error) {
 // PromptPassword reads a secret. On a terminal it disables echo; with a pipe
 // it reads one line, so `printf 'tok\n' | berth auth login` works.
 func (t *Terminal) PromptPassword(label string) (string, error) {
-	fmt.Fprintf(t.Out, "%s ", label)
-	if f, ok := t.In.(*os.File); ok && t.Interactive {
+	fmt.Fprintf(t.out, "%s ", label)
+	if f, ok := t.in.(*os.File); ok && t.interactive {
 		b, err := term.ReadPassword(int(f.Fd()))
-		fmt.Fprintln(t.Out)
+		fmt.Fprintln(t.out)
 		if err != nil {
 			return "", fmt.Errorf("read input: %w", err)
 		}
@@ -68,7 +68,7 @@ func (t *Terminal) PromptPassword(label string) (string, error) {
 // PromptDefault asks for a value, offering def as the accepted default.
 // Empty input takes the default; non-interactive stdin takes it directly.
 func (t *Terminal) PromptDefault(label, def string) (string, error) {
-	if !t.Interactive {
+	if !t.interactive {
 		return def, nil
 	}
 	line, err := t.Prompt(fmt.Sprintf("%s [%s]", label, def))
@@ -84,7 +84,7 @@ func (t *Terminal) PromptDefault(label, def string) (string, error) {
 // PromptYesNo asks a yes/no question, offering def when the answer is empty
 // or stdin is not interactive.
 func (t *Terminal) PromptYesNo(label string, def bool) (bool, error) {
-	if !t.Interactive {
+	if !t.interactive {
 		return def, nil
 	}
 	hint := "[y/N]"
@@ -110,7 +110,7 @@ func (t *Terminal) PromptYesNo(label string, def bool) (bool, error) {
 // PromptDefaultInt asks for an integer, offering def when the answer is
 // empty or stdin is not interactive.
 func (t *Terminal) PromptDefaultInt(label string, def int, validate func(int) error) (int, error) {
-	if !t.Interactive {
+	if !t.interactive {
 		return def, nil
 	}
 	for range 3 {
@@ -123,12 +123,12 @@ func (t *Terminal) PromptDefaultInt(label string, def int, validate func(int) er
 		}
 		n, err := strconv.Atoi(strings.TrimSpace(line))
 		if err != nil {
-			fmt.Fprintf(t.Out, "  not a number: %s\n", line)
+			fmt.Fprintf(t.out, "  not a number: %s\n", line)
 			continue
 		}
 		if validate != nil {
 			if verr := validate(n); verr != nil {
-				fmt.Fprintf(t.Out, "  %s\n", verr)
+				fmt.Fprintf(t.out, "  %s\n", verr)
 				continue
 			}
 		}
@@ -141,15 +141,15 @@ func (t *Terminal) PromptDefaultInt(label string, def int, validate func(int) er
 // the chosen option. Non-interactive stdin is an error — callers turn that
 // into a usage error naming the flag.
 func (t *Terminal) Select(label string, options []string) (int, error) {
-	if !t.Interactive {
+	if !t.interactive {
 		return 0, ErrNotInteractive
 	}
 	if len(options) == 0 {
 		return 0, errors.New("no options to select from")
 	}
-	fmt.Fprintf(t.Out, "%s\n", label)
+	fmt.Fprintf(t.out, "%s\n", label)
 	for i, o := range options {
-		fmt.Fprintf(t.Out, "  %d) %s\n", i+1, o)
+		fmt.Fprintf(t.out, "  %d) %s\n", i+1, o)
 	}
 	for range 3 {
 		line, err := t.Prompt("number?")
@@ -158,7 +158,7 @@ func (t *Terminal) Select(label string, options []string) (int, error) {
 		}
 		n, err := strconv.Atoi(strings.TrimSpace(line))
 		if err != nil || n < 1 || n > len(options) {
-			fmt.Fprintf(t.Out, "  pick a number between 1 and %d\n", len(options))
+			fmt.Fprintf(t.out, "  pick a number between 1 and %d\n", len(options))
 			continue
 		}
 		return n - 1, nil

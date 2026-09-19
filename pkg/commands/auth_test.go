@@ -16,14 +16,22 @@ import (
 
 const testToken = "2|00Zljwz2i5p3MBupnMQc37olBmbCipThdVkCgBYma465f8c9"
 
-func newFakeCoolify(t *testing.T) *httptest.Server {
+type fakeTeamServer struct {
+	*httptest.Server
+	authHeader string
+}
+
+func newFakeCoolify(t *testing.T) *fakeTeamServer {
 	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/teams/current" {
+	f := &fakeTeamServer{}
+	f.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/team" {
 			t.Errorf("unexpected path %q", r.URL.Path)
 		}
+		f.authHeader = r.Header.Get("Authorization")
 		w.Write([]byte(`{"id":0,"name":"Root Team","description":"The root team"}`))
 	}))
+	return f
 }
 
 func withIsolatedConfig(t *testing.T) string {

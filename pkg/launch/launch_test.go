@@ -114,7 +114,7 @@ func readyClient() *fakeClient {
 		details: map[string]coolify.ProjectDetail{
 			"proj-1": {Project: coolify.Project{UUID: "proj-1", Name: "pmc"}, Environments: []coolify.Environment{{UUID: "env-1", Name: "production"}}},
 		},
-		servers: []coolify.Server{{UUID: "srv-1", Name: "localhost", IP: "10.0.0.1", Usable: true}},
+		servers: []coolify.Server{{UUID: "srv-1", Name: "localhost", IP: "10.0.0.1"}},
 		keys:    []coolify.PrivateKey{{UUID: "key-1", Name: "existing"}},
 		databases: map[string]coolify.DatabaseDetail{
 			"db-1": {UUID: "db-1", Name: "pmc-postgres", Type: "standalone-postgresql", PostgresUser: "postgres", PostgresPassword: "secret", PostgresDB: "app"},
@@ -220,11 +220,8 @@ func TestExecuteCreatesDeployKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if !res.DeployKey.Created || res.PublicKey == "" {
-		t.Fatalf("deploy key: %+v publicKey %q", res.DeployKey, res.PublicKey)
-	}
-	if !strings.HasPrefix(res.PublicKey, "ssh-ed25519 ") {
-		t.Fatalf("public key %q", res.PublicKey)
+	if !res.DeployKey.Created || res.DeployKey.UUID == "" {
+		t.Fatalf("deploy key: %+v", res.DeployKey)
 	}
 }
 

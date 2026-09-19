@@ -66,11 +66,9 @@ func (c *Client) CreateEnvironment(ctx context.Context, projectUUID, name string
 }
 
 type Server struct {
-	UUID      string `json:"uuid"`
-	Name      string `json:"name"`
-	IP        string `json:"ip"`
-	Usable    bool   `json:"is_usable"`
-	Reachable bool   `json:"is_reachable"`
+	UUID string `json:"uuid"`
+	Name string `json:"name"`
+	IP   string `json:"ip"`
 }
 
 // Servers lists the servers the token can see.
@@ -299,14 +297,13 @@ func (c *Client) DeployApplication(ctx context.Context, appUUID string) (string,
 // internal commands (helper containers, docker plumbing) rather than build
 // output. Older Coolify versions omit the field entirely.
 type Deployment struct {
-	DeploymentUUID  string `json:"deployment_uuid"`
-	Status          string `json:"status"`
-	Logs            string `json:"logs"`
-	ApplicationName string `json:"application_name"`
-	Commit          string `json:"commit"`
-	DeploymentURL   string `json:"deployment_url"` // path part of the Coolify UI page
-	CreatedAt       string `json:"created_at"`
-	FinishedAt      string `json:"finished_at"`
+	DeploymentUUID string `json:"deployment_uuid"`
+	Status         string `json:"status"`
+	Logs           string `json:"logs"`
+	Commit         string `json:"commit"`
+	DeploymentURL  string `json:"deployment_url"` // path part of the Coolify UI page
+	CreatedAt      string `json:"created_at"`
+	FinishedAt     string `json:"finished_at"`
 }
 
 type DeploymentLog struct {

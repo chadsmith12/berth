@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -127,7 +128,7 @@ func runLaunch(in launchInput, ctx *cli.CmdContext) (any, error) {
 	// Preliminary app dir, from the flag or the production default, enough to
 	// open the session and resolve placement. The compose file for the chosen
 	// environment is read after the decision is made.
-	prelim, err := composeDir(in.path, defaultStr(envFlag, "production"))
+	prelim, err := composeDir(in.path, firstNonEmpty(envFlag, "production"))
 	if err != nil {
 		return nil, output.Usage(err)
 	}
@@ -167,7 +168,7 @@ func runLaunch(in launchInput, ctx *cli.CmdContext) (any, error) {
 	composePath := filepath.Join(appDir, "docker-compose."+envName+".yml")
 	composeInfo, composeErr := launch.ReadCompose(composePath)
 	if composeErr != nil {
-		if os.IsNotExist(fmt.Errorf("read %s: %w", composePath, composeErr)) || strings.Contains(composeErr.Error(), "no such file") {
+		if errors.Is(composeErr, fs.ErrNotExist) {
 			return nil, output.Usage(fmt.Errorf("%s does not exist — run berth generate --env %s first", composePath, envName))
 		}
 		return nil, output.Usage(composeErr)
@@ -531,7 +532,7 @@ func resolveLaunchBranch(ctx *cli.CmdContext, term *input.Terminal, path string)
 		}
 		return "", output.Usage(errors.New("missing --branch — the git branch to deploy"))
 	}
-	branch, err := term.PromptDefault("git branch?", defaultStr(head, "main"))
+	branch, err := term.PromptDefault("git branch?", firstNonEmpty(head, "main"))
 	if err != nil {
 		return "", output.Usage(fmt.Errorf("--branch: %w", err))
 	}
@@ -822,11 +823,4 @@ func nameList(n int, at func(int) string) string {
 		return "(none)"
 	}
 	return strings.Join(parts, ", ")
-}
-
-func defaultStr(v, fallback string) string {
-	if v != "" {
-		return v
-	}
-	return fallback
 }

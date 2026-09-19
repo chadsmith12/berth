@@ -66,7 +66,7 @@ func (f *fakeCoolify) route(t *testing.T, w http.ResponseWriter, r *http.Request
 	rest := segs[2:]
 
 	switch {
-	case len(rest) == 2 && rest[0] == "teams" && rest[1] == "current":
+	case len(rest) == 1 && rest[0] == "team":
 		write(200, map[string]any{"id": 0, "name": "Root Team"})
 	case rest[0] == "projects" && len(rest) == 1:
 		switch r.Method {

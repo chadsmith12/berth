@@ -33,7 +33,6 @@ type ResolveOptions struct {
 	Repo         *RepoConfig // preloaded repository config; skips the scan
 	UserPath     string      // user config path; defaults to UserConfigPath()
 	OptionalTeam bool        // leave Team nil instead of erroring when unresolved
-	LookupEnv    func(string) (string, bool)
 }
 
 // Resolve applies the placement precedence. The identity — which instance and
@@ -42,11 +41,6 @@ type ResolveOptions struct {
 // variables then override individual fields for the run. A value that cannot
 // be resolved is an error naming every place it could be set.
 func Resolve(opts ResolveOptions) (Placement, error) {
-	lookup := opts.LookupEnv
-	if lookup == nil {
-		lookup = os.LookupEnv
-	}
-
 	repo, repoDesc, err := loadRepoForResolve(opts)
 	if err != nil {
 		return Placement{}, err
@@ -64,7 +58,7 @@ func Resolve(opts ResolveOptions) (Placement, error) {
 		return Placement{}, err
 	}
 
-	profileName := firstNonEmpty(opts.Overrides.Profile, envString(lookup, "BERTH_PROFILE"))
+	profileName := firstNonEmpty(opts.Overrides.Profile, envString("BERTH_PROFILE"))
 	var profile, defaultProfile Profile
 	if profileName != "" {
 		p, ok := user.ProfileFor(profileName)
@@ -76,7 +70,7 @@ func Resolve(opts ResolveOptions) (Placement, error) {
 		defaultProfile, _ = user.DefaultProfile()
 	}
 
-	if v := envString(lookup, "BERTH_TEAM"); v != "" {
+	if v := envString("BERTH_TEAM"); v != "" {
 		if _, err := strconv.Atoi(v); err != nil {
 			return Placement{}, fmt.Errorf("BERTH_TEAM must be a team id (an integer), got %q", v)
 		}
@@ -84,7 +78,7 @@ func Resolve(opts ResolveOptions) (Placement, error) {
 
 	url := firstNonEmpty(
 		opts.Overrides.URL,
-		envString(lookup, "BERTH_URL"),
+		envString("BERTH_URL"),
 		profile.URL,
 		coolifyURL(repo),
 		defaultProfile.URL,
@@ -97,8 +91,8 @@ func Resolve(opts ResolveOptions) (Placement, error) {
 	switch {
 	case opts.Overrides.TeamID != 0:
 		teamID, teamFound = opts.Overrides.TeamID, true
-	case envString(lookup, "BERTH_TEAM") != "":
-		teamID, _ = strconv.Atoi(envString(lookup, "BERTH_TEAM"))
+	case envString("BERTH_TEAM") != "":
+		teamID, _ = strconv.Atoi(envString("BERTH_TEAM"))
 		teamFound = true
 	default:
 		for _, ref := range []*TeamRef{profile.Team, teamRef(repo), defaultProfile.Team} {
@@ -112,7 +106,7 @@ func Resolve(opts ResolveOptions) (Placement, error) {
 		return Placement{}, fmt.Errorf("cannot resolve the Coolify team — set one of: --team, BERTH_TEAM, --profile, \"coolify\": {\"team\": {\"id\"}} in %s, or run berth auth login", repoDesc)
 	}
 
-	project := firstNonEmpty(opts.Overrides.Project, envString(lookup, "BERTH_PROJECT"), coolifyProject(repo))
+	project := firstNonEmpty(opts.Overrides.Project, envString("BERTH_PROJECT"), coolifyProject(repo))
 
 	p := Placement{
 		URL:     NormalizeURL(url),
@@ -189,12 +183,8 @@ func teamNameFor(id int, refs ...*TeamRef) string {
 	return ""
 }
 
-func envString(lookup func(string) (string, bool), key string) string {
-	v, ok := lookup(key)
-	if !ok {
-		return ""
-	}
-	return strings.TrimSpace(v)
+func envString(key string) string {
+	return strings.TrimSpace(os.Getenv(key))
 }
 
 func firstNonEmpty(values ...string) string {

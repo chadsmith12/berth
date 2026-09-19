@@ -62,10 +62,7 @@ type Result struct {
 	Server      Step
 	DeployKey   Step
 	Application Step
-	// PublicKey is set only when the deploy key was just created: the user
-	// must paste it into the git host before the first deploy can clone.
-	PublicKey string
-	EnvVars   []string
+	EnvVars     []string
 	// Notices are things the user must act on (e.g. a chosen database that
 	// does not exist in the postgres resource yet).
 	Notices []string
@@ -106,7 +103,6 @@ func Execute(ctx context.Context, client Client, in Inputs) (Result, error) {
 		return res, err
 	}
 	res.DeployKey = Step{Name: key.Name, UUID: key.UUID, Created: key.Created}
-	res.PublicKey = key.PublicKey
 
 	dbVars, notices, err := databaseEnvVars(ctx, client, in)
 	if err != nil {
@@ -267,14 +263,10 @@ func keyNames(keys []coolify.PrivateKey) string {
 	return strings.Join(names, ", ")
 }
 
-// domainWithPort appends the compose port to a portless domain and refuses a
-// domain whose port disagrees with it. Coolify's proxy routes by that port;
-// without it the proxy hits port 80 and returns 502.
+// domainWithPort appends the compose port to a portless domain.
 //
-// The scheme is preserved: https enables TLS (Coolify provisions a
-// certificate), http does not. Only http and https are accepted, so a bare
+// The scheme is preserved: Only http and https are accepted, so a bare
 // host (no scheme) and a non-web scheme are both normalized or refused
-// explicitly rather than silently mis-configured.
 func domainWithPort(domain string, port int) (string, error) {
 	raw := strings.TrimSpace(domain)
 	if raw == "" {

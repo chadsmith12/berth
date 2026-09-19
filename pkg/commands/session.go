@@ -15,11 +15,10 @@ import (
 )
 
 // Session is everything a command needs to act against Coolify, resolved
-// once per invocation: the placement, the token, a client with the team
-// pre-set so 404s name it, and the repository's environment registry.
+// once per invocation: the placement, a client with the team pre-set so
+// 404s name it, and the repository's environment registry.
 type Session struct {
 	Placement config.Placement
-	Token     string
 	Client    *coolify.Client
 	Env       string
 	Repo      *config.RepoConfig
@@ -107,7 +106,6 @@ func Open(ctx *cli.CmdContext, opts SessionOptions) (*Session, error) {
 		}
 	}
 
-	sess.Token = token
 	sess.Client = client
 	return sess, nil
 }

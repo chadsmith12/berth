@@ -50,16 +50,13 @@ func TestOpenResolvesFromDefaultProfile(t *testing.T) {
 	if sess.Placement.URL != srv.URL || sess.Placement.Team == nil || sess.Placement.Team.ID != 0 {
 		t.Fatalf("placement %+v", sess.Placement)
 	}
-	if sess.Token != testToken {
-		t.Fatalf("token %q", sess.Token)
-	}
 	if sess.Client == nil {
 		t.Fatal("client must be built")
 	}
 }
 
 func TestOpenBERTHTokenOverridesStored(t *testing.T) {
-	credPath := withIsolatedConfig(t)
+	withIsolatedConfig(t)
 	srv := newFakeCoolify(t)
 	defer srv.Close()
 	t.Setenv("BERTH_URL", srv.URL)
@@ -69,10 +66,15 @@ func TestOpenBERTHTokenOverridesStored(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	if sess.Token != "7|pipetoken" || sess.Placement.URL != srv.URL {
+	if sess.Placement.URL != srv.URL {
 		t.Fatalf("sess %+v", sess.Placement)
 	}
-	_ = credPath
+	if _, err := sess.Client.CurrentTeam(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if srv.authHeader != "Bearer 7|pipetoken" {
+		t.Fatalf("token on the wire = %q", srv.authHeader)
+	}
 }
 
 func TestOpenMissingTokenIsUsageError(t *testing.T) {
@@ -90,18 +92,20 @@ func TestOpenMissingTokenIsUsageError(t *testing.T) {
 }
 
 func TestOpenTeamTokenRequiredWithoutOptional(t *testing.T) {
+	srv := newFakeCoolify(t)
+	defer srv.Close()
 	credPath := withIsolatedConfig(t)
-	t.Setenv("BERTH_URL", "https://coolify.example.com")
+	t.Setenv("BERTH_URL", srv.URL)
 	t.Setenv("BERTH_TOKEN", "")
 
 	creds := config.Credentials{}
-	config.UpsertToken(&creds, "https://coolify.example.com", config.TeamToken{ID: 0, Name: "Root Team", Token: "1|aaa"})
+	config.UpsertToken(&creds, srv.URL, config.TeamToken{ID: 0, Name: "Root Team", Token: "1|aaa"})
 	if err := config.SaveCredentials(credPath, creds); err != nil {
 		t.Fatal(err)
 	}
 	userPath := filepath.Join(filepath.Dir(credPath), "config.json")
 	cfg := config.UserConfig{}
-	cfg.UpsertProfile(config.Profile{Name: "other", URL: "https://coolify.example.com", Team: &config.TeamRef{ID: 5, Name: "Other Team"}})
+	cfg.UpsertProfile(config.Profile{Name: "other", URL: srv.URL, Team: &config.TeamRef{ID: 5, Name: "Other Team"}})
 	cfg.Default = "other"
 	if err := config.SaveUserConfig(userPath, cfg); err != nil {
 		t.Fatal(err)
@@ -119,8 +123,11 @@ func TestOpenTeamTokenRequiredWithoutOptional(t *testing.T) {
 	if err != nil {
 		t.Fatalf("optional open: %v", err)
 	}
-	if sess.Token != "1|aaa" {
-		t.Fatalf("optional mode should fall back to the single token, got %q", sess.Token)
+	if _, err := sess.Client.CurrentTeam(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if srv.authHeader != "Bearer 1|aaa" {
+		t.Fatalf("optional mode should fall back to the single token, got %q", srv.authHeader)
 	}
 }
 
@@ -213,7 +220,7 @@ func TestOpenPlacementOnlySkipsToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	if sess.Client != nil || sess.Token != "" {
+	if sess.Client != nil {
 		t.Fatalf("placement-only must not build a client, got %+v", sess)
 	}
 	if sess.Placement.URL != "https://coolify.example.com" {
